@@ -61,10 +61,26 @@ const WORK_HOURS = {
     0: { open: 11, close: 16 }, // Sun — 11am–4pm
 };
 
-function isOpenNow() {
+// ── Timezone-aware time helpers ───────────────────────────────────────────────
+// Railway servers run UTC. Set BOT_TIMEZONE (e.g. "Africa/Johannesburg") so
+// working-hours checks use your local time instead of the server clock.
+function _localParts() {
+    const tz  = process.env.BOT_TIMEZONE || 'UTC';
     const now  = new Date();
-    const day  = now.getDay();
-    const hour = now.getHours() + now.getMinutes() / 60;
+    // Intl gives us locale strings like "Fri, 21 Feb 2026, 10:35:00"
+    const fmt  = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        weekday: 'short', hour: 'numeric', minute: 'numeric', hour12: false,
+    });
+    const parts = Object.fromEntries(fmt.formatToParts(now).map(p => [p.type, p.value]));
+    const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const day  = dayMap[parts.weekday] ?? now.getDay();
+    const hour = parseInt(parts.hour, 10) + parseInt(parts.minute, 10) / 60;
+    return { day, hour };
+}
+
+function isOpenNow() {
+    const { day, hour } = _localParts();
     const slot = WORK_HOURS[day];
     if (!slot) return false;
     return hour >= slot.open && hour < slot.close;
@@ -77,8 +93,7 @@ function fmtHour(h) {
 }
 
 function closedMessage() {
-    const now  = new Date();
-    const day  = now.getDay();
+    const { day } = _localParts();
     const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     // Find next open day
     for (let i = 1; i <= 7; i++) {

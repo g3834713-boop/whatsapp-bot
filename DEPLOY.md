@@ -37,6 +37,7 @@ Click the service → **Variables** tab → add the following:
 |---|---|---|
 | `CLIENT_ID` | `bot-client1` | **Must be unique per service.** Used to namespace the WhatsApp session. |
 | `DASHBOARD_PASSWORD` | `supersecret` | Protects the dashboard. Omit to leave it open (not recommended). |
+| `BOT_TIMEZONE` | `Africa/Johannesburg` | **Required for correct working-hours checks.** Railway runs UTC — without this the bot thinks it's always UTC time and may send "we're closed" messages when you're actually open. Use any [IANA timezone name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones). |
 | `DATA_DIR` | `/app/data` | Should match your volume mount path. |
 | `BOT_PREFIX` | `!` | Command prefix. Default is `!`. |
 | `PORT` | *(leave unset)* | Railway injects this automatically. |
@@ -110,6 +111,7 @@ Config and session data on each volume are never touched during a code redeploy.
 
 | Symptom | Fix |
 |---|---|
+| **Bot is live but not responding** | Almost always a timezone issue. Set `BOT_TIMEZONE` (e.g. `Africa/Johannesburg`) in Railway Variables — without it the bot uses UTC and thinks it's outside working hours. |
 | Bot crashes immediately with `SingletonLock` error | The entrypoint clears locks on every start. If it persists, delete `.wwebjs_auth/` folder from the volume via Railway's volume browser and restart. |
 | QR code never appears | Check build logs. Usually means `CHROMIUM_PATH` is wrong or Chromium dependencies are missing — the `node:18-bookworm-slim` base image includes them all. |
 | Dashboard login fails | Double-check `DASHBOARD_PASSWORD` env var in Railway. Changing it invalidates all existing browser sessions (users must log in again). |
