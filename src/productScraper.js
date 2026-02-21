@@ -79,8 +79,8 @@ const CATEGORIES = [
     },
     {
         name:        'Consumer Electronics',
-        url:         'https://www.made-in-china.com/Consumer-Electronics-Catalog/Consumer-Electronics.html',
-        fallbackUrl: 'https://www.made-in-china.com/Consumer-Electronics-Catalog/Mobile-Phone.html',
+        url:         'https://www.made-in-china.com/Consumer-Electronics-Catalog/Mobile-Phone.html',
+        fallbackUrl: 'https://www.made-in-china.com/Consumer-Electronics-Catalog/Bluetooth-Speaker.html',
     },
     {
         name:        'Electrical & Electronics',
@@ -99,8 +99,8 @@ const CATEGORIES = [
     },
     {
         name:        'Industrial Equipment & Components',
-        url:         'https://www.made-in-china.com/Industrial-Equipment-Components-Catalog/Industrial-Equipment-Components.html',
-        fallbackUrl: 'https://www.made-in-china.com/Industrial-Machinery-Catalog/Bearing.html',
+        url:         'https://www.made-in-china.com/Industrial-Equipment-Components-Catalog/Water-Pump.html',
+        fallbackUrl: 'https://www.made-in-china.com/Industrial-Equipment-Components-Catalog/Ball-Valve.html',
     },
     {
         name:        'Instruments & Meters',
