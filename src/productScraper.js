@@ -214,13 +214,25 @@ async function scrapeCategory(browser, category) {
             else req.continue();
         });
 
-        const searchUrl =
+        const directUrl =
             `https://www.alibaba.com/trade/search` +
             `?SearchText=${encodeURIComponent(category.name)}` +
             `&IndexArea=product_en&viewtype=G&page=1`;
 
+        // Railway runs on datacenter IPs which Alibaba hard-blocks.
+        // If SCRAPER_API_KEY is set, route through ScraperAPI residential proxies.
+        const scraperKey = process.env.SCRAPER_API_KEY;
+        const searchUrl = scraperKey
+            ? `http://api.scraperapi.com?api_key=${scraperKey}&url=${encodeURIComponent(directUrl)}&render=true`
+            : directUrl;
+
+        if (!scraperKey) {
+            console.warn('[SCRAPER] WARNING: SCRAPER_API_KEY not set. Alibaba will block Railway datacenter IPs.');
+            console.warn('[SCRAPER] Get a free key at https://www.scraperapi.com (1000 req/month free)');
+        }
+
         // Use networkidle2 so JS-rendered cards fully hydrate before we query
-        await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+        await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
         // Extra buffer for lazy-rendered card batches
         await sleep(3000);
