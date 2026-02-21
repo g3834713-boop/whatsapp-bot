@@ -696,7 +696,26 @@ async function loadAutoReply() {
   arData = await fetch('/api/autoreply').then(r=>r.json());
   document.getElementById('arEnabled').checked = arData.enabled !== false;
   document.getElementById('arName').value = arData.businessName || '';
-  menuItems = (arData.menuItems || []).map(item => Object.assign({ agentMode: false, subItems: [] }, item));
+  // Support both old { responses:{} } and new { menuItems:[] } formats
+  if (arData.menuItems && arData.menuItems.length) {
+    menuItems = arData.menuItems.map(item => Object.assign({ agentMode: false, subItems: [] }, item));
+  } else if (arData.responses) {
+    const ORDER = ['1','2','3','4','5','6','0'];
+    menuItems = ORDER
+      .filter(k => arData.responses[k])
+      .map(k => ({
+        key: k,
+        label: (arData.responses[k].split('\n')[0] || '').replace(/\*/g,'').trim(),
+        response: arData.responses[k],
+        agentMode: k === '0',
+        subItems: k === '6' ? [
+          { key:'1', label:'\ud83d\udcb3 Pay for Order',    response:'After payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'pay'  },
+          { key:'2', label:'\ud83d\ude9a Pay for Shipping', response:'After payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'ship' },
+        ] : [],
+      }));
+  } else {
+    menuItems = [];
+  }
   renderMenuBuilder();
   const bust = '?t=' + Date.now();
   const pPay  = document.getElementById('imgPreviewPay');
@@ -899,6 +918,7 @@ async function saveAutoReply() {
   arData.businessName = document.getElementById('arName').value;
   arData.enabled      = document.getElementById('arEnabled').checked;
   arData.menuItems    = menuItems;
+  delete arData.responses; // remove legacy key if present
   const r = await fetch('/api/autoreply', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

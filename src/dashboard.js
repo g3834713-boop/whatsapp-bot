@@ -298,9 +298,28 @@ app.post('/api/reengagement', (req, res) => {
 });
 
 // ── API: autoreply config ─────────────────────────────────────────────────────
+// Convert legacy { responses:{} } format to { menuItems:[] } on the fly
+function _normalizeAutoReply(raw) {
+    if (raw.menuItems && Array.isArray(raw.menuItems) && raw.menuItems.length) return raw;
+    const ORDER = ['1','2','3','4','5','6','0'];
+    const menuItems = ORDER
+        .filter(k => raw.responses && raw.responses[k])
+        .map(k => ({
+            key:       k,
+            label:     (raw.responses[k].split('\n')[0] || '').replace(/\*/g,'').trim(),
+            response:  raw.responses[k],
+            agentMode: k === '0',
+            subItems:  k === '6' ? [
+                { key:'1', label:'\ud83d\udcb3 Pay for Order',    response:'After payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'pay'  },
+                { key:'2', label:'\ud83d\ude9a Pay for Shipping', response:'After payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'ship' },
+            ] : [],
+        }));
+    return Object.assign({}, raw, { menuItems });
+}
+
 app.get('/api/autoreply', (req, res) => {
-    try { res.json(JSON.parse(fs.readFileSync(AUTOREPLY_PATH, 'utf8'))); }
-    catch (_) { res.json({ enabled: true, businessName: 'My Business', responses: {} }); }
+    try { res.json(_normalizeAutoReply(JSON.parse(fs.readFileSync(AUTOREPLY_PATH, 'utf8')))); }
+    catch (_) { res.json({ enabled: true, businessName: 'My Business', menuItems: [] }); }
 });
 
 app.post('/api/autoreply', (req, res) => {
