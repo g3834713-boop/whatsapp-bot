@@ -1,19 +1,20 @@
 /**
- * Product Scraper -- made-in-china.com scraper (Puppeteer edition)
+ * Product Scraper — made-in-china.com (axios + regex edition)
  *
- * Why made-in-china.com instead of Alibaba:
- *   - Server-side rendered HTML (actual product data in the page source)
- *   - Does NOT block Railway/datacenter IPs (no CAPTCHA)
- *   - No ScraperAPI needed → 100% free, unlimited runs
- *   - Shows real factory FOB prices and MOQ directly
+ * Why axios instead of Puppeteer:
+ *   - MIC pages are fully server-side rendered — all product data (title,
+ *     price, MOQ, image URL) is present in the raw HTML response.
+ *   - Puppeteer + networkidle2 on Railway times out because MIC pages fire
+ *     endless background XHRs after load.
+ *   - axios is instant, needs no browser process, and works 100% reliably
+ *     on Railway's headless environment.
  *
- * Puppeteer is used (rather than plain axios) so that lazy-loaded
- * product images are resolved before we extract src attributes.
- *
- * A single browser instance is launched per full scrape run, then closed.
+ * No ScraperAPI needed — MIC does not block datacenter IPs.
  */
 
-const puppeteer = require('puppeteer');
+'use strict';
+
+const axios = require('axios');
 const fs        = require('fs');
 const path      = require('path');
 
@@ -21,33 +22,25 @@ const PRODUCTS_FILE = path.join(__dirname, '..', 'config', 'products.json');
 const DEBUG_DIR     = path.join(__dirname, '..', 'config', 'scraper-debug');
 
 const MAX_PER_CAT   = 6;
-const REQ_DELAY_MIN = 4000;
-const REQ_DELAY_MAX = 8000;
+const REQ_DELAY_MIN = 2500;
+const REQ_DELAY_MAX = 5000;
 
-const CHROME_PATH = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
-
-const PUPPETEER_ARGS = [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-accelerated-2d-canvas',
-    '--no-first-run',
-    '--no-zygote',
-    '--disable-gpu',
-    '--shm-size=256mb',
-    '--window-size=1366,768',
-    '--disable-blink-features=AutomationControlled',
-];
+// Common browser-like headers so MIC accepts the request.
+const REQUEST_HEADERS = {
+    'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+        '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept':
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Cache-Control':   'no-cache',
+    'Pragma':          'no-cache',
+};
 
 // ---- made-in-china.com categories -------------------------------------------
-// url:         MIC "hot china products" search — confirmed to return product listings
-//              with *.en.made-in-china.com/product/ links, price, and MOQ.
-// fallbackUrl: a known leaf-subcategory catalog page used if the search URL fails.
-//
-// WHY search URLs as primary:
-//   Top-level category pages (e.g. /Electrical-Electronics-Catalog/Electrical-Electronics.html)
-//   are NAVIGATION/INDEX pages only — they list subcategories, not products.
-//   Only leaf subcategory catalog pages or the products-search endpoint list actual products.
+// primary url: products-search/hot-china-products/{keyword} — SSR page with
+//              real product listings (confirmed via live fetch).
+// fallbackUrl: a known leaf subcategory catalog page if the primary returns no results.
 const CATEGORIES = [
     {
         name:        'Apparel & Accessories',
@@ -193,227 +186,181 @@ function saveDebugHtml(categoryName, html) {
     try {
         if (!fs.existsSync(DEBUG_DIR)) fs.mkdirSync(DEBUG_DIR, { recursive: true });
         const safe = categoryName.replace(/[^a-z0-9]/gi, '_');
-        fs.writeFileSync(path.join(DEBUG_DIR, `${safe}.html`), html.slice(0, 60000));
+        fs.writeFileSync(path.join(DEBUG_DIR, `${safe}.html`), (html || '').slice(0, 80000));
     } catch (_) {}
 }
 
-// ---- Stealth patches --------------------------------------------------------
-async function applyStealthPatches(page) {
-    await page.evaluateOnNewDocument(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        window.chrome = { runtime: {} };
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+// ---- HTML fetch --------------------------------------------------------------
+async function fetchHtml(url) {
+    const res = await axios.get(url, {
+        headers:        REQUEST_HEADERS,
+        timeout:        20000,
+        maxRedirects:   5,
+        responseType:   'text',
+        validateStatus: s => s < 500,
     });
+    return res.data || '';
 }
 
-// ---- Core scraper -----------------------------------------------------------
+// ---- HTML → products parser --------------------------------------------------
 /**
- * Scrape one made-in-china.com category page.
- * MIC renders product titles, prices, and MOQ server-side, so they're in the
- * initial HTML.  Images are lazy-loaded; Puppeteer resolves them automatically.
- * No ScraperAPI proxy needed -- MIC does not block datacenter IPs.
+ * Parse product listings out of a raw MIC HTML string.
  *
- * Fallback: if the catalog URL yields no cards, tries MIC's keyword search.
+ * Confirmed HTML structure (from live fetches of search + catalog pages):
  *
- * @param {import('puppeteer').Browser} browser
- * @param {{ name: string, url: string }} category
- * @returns {Promise<object[]>}
+ *   <a href="https://SUPPLIER.en.made-in-china.com/product/ID/China-TITLE.html">
+ *     TITLE TEXT
+ *   </a>
+ *   ... nearby text contains price and MOQ ...
+ *   US$XX.XX-XX.XX / Unit    (catalog pages)
+ *   US$XX.XX 5 Sets(MOQ)     (search pages)
+ *
+ * Images appear as:
+ *   <img src="https://image.made-in-china.com/...jpg" ...>
+ *   <img data-src="https://image.made-in-china.com/...jpg" ...>   (lazy)
  */
-async function scrapeCategory(browser, category) {
-    const page = await browser.newPage();
-    try {
-        await applyStealthPatches(page);
-        await page.setViewport({
-            width:  1366 + Math.floor(Math.random() * 80),
-            height: 768  + Math.floor(Math.random() * 60),
-        });
-        await page.setUserAgent(
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-            '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+function parseProducts(html, categoryName, max) {
+    const results = [];
+    const seen    = new Set();
+
+    // Find every product link in the page.
+    const linkRe = /href="(https?:\/\/[\w-]+\.en\.made-in-china\.com\/product\/[^"]+)"/g;
+    let match;
+
+    while ((match = linkRe.exec(html)) !== null && results.length < max) {
+        const productUrl = match[1].split('?')[0]; // strip ad-tracking query params
+        if (seen.has(productUrl)) continue;
+        seen.add(productUrl);
+
+        // --- Grab a context window of HTML around this link ---
+        const ctxStart = Math.max(0, match.index - 400);
+        const ctxEnd   = Math.min(html.length, match.index + 1100);
+        const ctx      = html.slice(ctxStart, ctxEnd);
+
+        // --- Title: text inside the <a> tag that contains this href ---
+        const titleRe = new RegExp(
+            'href="' + productUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+            '[^"]*"[^>]*>\\s*([^<]{5,150}?)\\s*<',
+            'i'
         );
-        await page.setExtraHTTPHeaders({
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        });
+        const titleMatch = titleRe.exec(ctx);
+        let title = titleMatch ? titleMatch[1].trim() : '';
 
-        // Block fonts/media only (allow images for lazy-load resolution)
-        await page.setRequestInterception(true);
-        page.on('request', req => {
-            if (['media', 'font'].includes(req.resourceType())) req.abort();
-            else req.continue();
-        });
-
-        // Fallback URL: a known leaf subcategory catalog page
-        const searchUrl = category.fallbackUrl || '';
-
-        // Selector for product cards: MIC renders each item in a list container.
-        // The most stable anchor is links pointing to *.en.made-in-china.com/product/
-        // We look for the parent container of any such link.
-        const PRODUCT_LINK_SEL = 'a[href*=".en.made-in-china.com/product/"]';
-
-        let found = false;
-
-        // -- Try primary catalog URL --
-        try {
-            await page.goto(category.url, { waitUntil: 'networkidle2', timeout: 40000 });
-            await sleep(2000);
-            await page.waitForSelector(PRODUCT_LINK_SEL, { timeout: 12000 });
-            found = true;
-        } catch (_) {
-            console.warn(`[SCRAPER] Catalog page empty for "${category.name}", trying search URL...`);
+        // Fallback: extract title slug from URL
+        if (!title || title.length < 5) {
+            const slugMatch = productUrl.match(/\/China-([^/]+)\.html/);
+            if (slugMatch) title = slugMatch[1].replace(/-/g, ' ');
         }
+        if (!title || title.length < 5) continue;
 
-        // -- Fallback to keyword search --
-        if (!found) {
-            try {
-                await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 40000 });
-                await sleep(2000);
-                await page.waitForSelector(PRODUCT_LINK_SEL, { timeout: 12000 });
-                found = true;
-            } catch (_) {
-                const html      = await page.content();
-                const title     = await page.title();
-                const bodySnip  = await page.evaluate(() =>
-                    (document.body ? document.body.innerText : '').slice(0, 600)
-                );
-                console.warn(`[SCRAPER] No products for "${category.name}"`);
-                console.warn(`[SCRAPER] Page title: "${title}"`);
-                console.warn(`[SCRAPER] Body snippet:\n${bodySnip}\n---`);
-                saveDebugHtml(category.name, html);
-            }
-        }
+        // Decode common HTML entities
+        title = title
+            .replace(/&amp;/g,  '&')
+            .replace(/&lt;/g,   '<')
+            .replace(/&gt;/g,   '>')
+            .replace(/&#039;/g, "'")
+            .replace(/&quot;/g, '"')
+            .replace(/\s+/g,    ' ')
+            .trim()
+            .slice(0, 140);
 
-        if (!found) return [];
+        // --- Price ---
+        // Matches: "US$200.00-600.00 / Piece"  OR  "US$200.00-600.00"
+        const priceMatch = ctx.match(
+            /US\$\s*[\d,.]+(?:\s*[-–]\s*[\d,.]+)?(?:\s*\/\s*[\w.]+)?/
+        );
+        const price = priceMatch ? priceMatch[0].replace(/\s+/g, ' ').trim() : 'Contact supplier';
 
-        // ---- Extract products from the live DOM --------------------------------
-        const products = await page.evaluate((max, categoryName, linkSel) => {
-            const results   = [];
-            const linkEls   = Array.from(document.querySelectorAll(linkSel));
-            // Deduplicate: only one link per product card (first link in card)
-            const seen      = new Set();
-            const uniqueLinks = linkEls.filter(a => {
-                const href = a.getAttribute('href') || '';
-                if (seen.has(href)) return false;
-                seen.add(href);
-                return true;
-            });
+        // --- MOQ ---
+        // Matches: "5 Sets(MOQ)"  "1000 Meters  (MOQ)"  "200 pieces(MOQ)"
+        const moqMatch = ctx.match(/([\d,]+\s+[\w()]+)\s*\(MOQ\)/i);
+        const moq      = moqMatch ? moqMatch[0].trim() : 'MOQ negotiable';
 
-            for (let i = 0; i < uniqueLinks.length && results.length < max; i++) {
-                const anchor   = uniqueLinks[i];
-                const href     = anchor.getAttribute('href') || '';
-                const linkUrl  = href.startsWith('http') ? href : 'https:' + href;
+        // --- Image ---
+        let imageUrl = '';
+        const imgRe  = /(?:data-src|src)="(https?:\/\/image\.made-in-china\.com\/[^"]+)"/g;
+        const imgCtx = html.slice(
+            Math.max(0, match.index - 200),
+            Math.min(html.length, match.index + 800)
+        );
+        const imgMatch = imgRe.exec(imgCtx);
+        if (imgMatch) imageUrl = imgMatch[1];
 
-                // Title: text of the anchor itself, or the closest heading
-                let title = (anchor.textContent || '').replace(/\s+/g, ' ').trim();
-                if (!title || title.length < 5) {
-                    const heading = anchor.closest('h2,h3,h4');
-                    if (heading) title = (heading.textContent || '').replace(/\s+/g, ' ').trim();
-                }
-                if (!title || title.length < 5) continue;
-
-                // Walk up the DOM to find the card container (stop at 8 levels)
-                let card = anchor;
-                for (let depth = 0; depth < 8; depth++) {
-                    if (!card.parentElement) break;
-                    card = card.parentElement;
-                    const text = card.innerText || '';
-                    // Stop once we find a container that has BOTH a price and an MOQ
-                    if (/US\$[\d,.]+/.test(text) && /MOQ|Pieces?\s*\(/.test(text)) break;
-                }
-
-                const cardText = card.innerText || '';
-
-                // Price — two formats depending on page type:
-                //   Search pages:  "US$200.00-600.00 5 Sets(MOQ)"  (no /unit)
-                //   Catalog pages: "US$0.05-1.8 / Meter"            (with /unit)
-                const priceMatch = cardText.match(
-                    /US\$[\d,.]+(?:\s*[-–]\s*[\d,.]+)?(?:\s*\/\s*[\w.]+)?/
-                );
-                const price = priceMatch ? priceMatch[0].trim() : 'Contact supplier';
-
-                // MOQ — search pages: "5 Sets(MOQ)"  catalog pages: "1000 Meters  (MOQ)"
-                const moqMatch = cardText.match(/(\d[\d,]*\s+\w+)\s*\(MOQ\)/i);
-                const moq      = moqMatch ? moqMatch[0].trim() : 'MOQ negotiable';
-
-                // Image: prefer data-src (lazy) then src; skip space.png placeholders
-                let imageUrl = '';
-                const imgs   = Array.from(card.querySelectorAll('img'));
-                for (const img of imgs) {
-                    const raw = img.getAttribute('data-src') ||
-                                img.getAttribute('data-lazy-src') ||
-                                img.getAttribute('src') || '';
-                    if (raw && !raw.includes('space.png') && !raw.startsWith('data:') && raw.length > 20) {
-                        imageUrl = raw.startsWith('//') ? 'https:' + raw : raw;
-                        break;
-                    }
-                }
-
-                results.push({
-                    id:         `mic-${Date.now().toString(36)}-${i}`,
-                    title:      title.slice(0, 130),
-                    price:      price.slice(0, 80),
-                    minOrder:   moq.slice(0, 60),
-                    imageUrl,
-                    category:   categoryName,
-                    productUrl: linkUrl,
-                    scrapedAt:  new Date().toISOString(),
-                    source:     'made-in-china.com',
-                });
-            }
-            return results;
-        }, MAX_PER_CAT, category.name, PRODUCT_LINK_SEL);
-
-        console.log(`[SCRAPER] "${category.name}" -> ${products.length} product(s)`);
-        return products;
-    } catch (e) {
-        console.warn(`[SCRAPER] Error for "${category.name}": ${e.message}`);
-        return [];
-    } finally {
-        await page.close();
+        results.push({
+            id:        `mic-${Date.now().toString(36)}-${results.length}`,
+            title,
+            price,
+            minOrder:  moq,
+            imageUrl,
+            category:  categoryName,
+            productUrl,
+            scrapedAt: new Date().toISOString(),
+            source:    'made-in-china.com',
+        });
     }
+
+    return results;
+}
+
+// ---- Core category scraper --------------------------------------------------
+async function scrapeCategory(category) {
+    for (const targetUrl of [category.url, category.fallbackUrl].filter(Boolean)) {
+        let html = '';
+        try {
+            html = await fetchHtml(targetUrl);
+        } catch (e) {
+            console.warn(`[SCRAPER] Fetch error "${category.name}" @ ${targetUrl}: ${e.message}`);
+            continue;
+        }
+
+        if (!html.includes('.en.made-in-china.com/product/')) {
+            const snippet = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 400);
+            console.warn(
+                `[SCRAPER] No product links found for "${category.name}" @ ${targetUrl}\n` +
+                `[SCRAPER] Snippet: ${snippet}`
+            );
+            saveDebugHtml(category.name, html);
+            continue;
+        }
+
+        const products = parseProducts(html, category.name, MAX_PER_CAT);
+        if (products.length > 0) {
+            console.log(`[SCRAPER] "${category.name}" → ${products.length} product(s)`);
+            return products;
+        }
+
+        console.warn(`[SCRAPER] Parser returned 0 for "${category.name}" @ ${targetUrl} — saving debug HTML`);
+        saveDebugHtml(category.name, html);
+    }
+
+    console.warn(`[SCRAPER] Skipping "${category.name}" — no products from any URL`);
+    return [];
 }
 
 // ---- Public: full cache refresh ---------------------------------------------
 async function refreshProductCache(progressCb) {
-    console.log('[SCRAPER] Launching browser for made-in-china.com product cache refresh...');
-    let browser;
-    try {
-        browser = await puppeteer.launch({
-            headless: true,
-            executablePath: CHROME_PATH,
-            args: PUPPETEER_ARGS,
-        });
-    } catch (e) {
-        console.error('[SCRAPER] Failed to launch browser:', e.message);
-        throw e;
-    }
+    console.log('[SCRAPER] Starting made-in-china.com product cache refresh (axios)...');
 
     const newProducts = [];
     let done = 0;
 
-    try {
-        for (const category of CATEGORIES) {
-            const batch = await scrapeCategory(browser, category);
-            newProducts.push(...batch);
-            done++;
-            if (progressCb) progressCb(done, CATEGORIES.length, category.name, batch.length);
-            const delay = REQ_DELAY_MIN + Math.random() * (REQ_DELAY_MAX - REQ_DELAY_MIN);
-            await sleep(delay);
-        }
-    } finally {
-        try { await browser.close(); } catch (_) {}
+    for (const category of CATEGORIES) {
+        const batch = await scrapeCategory(category);
+        newProducts.push(...batch);
+        done++;
+        if (progressCb) progressCb(done, CATEGORIES.length, category.name, batch.length);
+        const delay = REQ_DELAY_MIN + Math.random() * (REQ_DELAY_MAX - REQ_DELAY_MIN);
+        await sleep(delay);
     }
 
-    const combined = newProducts.slice(0, 1000);
     const cache = {
         lastUpdated:  new Date().toISOString(),
         totalScraped: newProducts.length,
-        products:     combined,
+        products:     newProducts.slice(0, 1000),
         source:       'made-in-china.com',
     };
     saveCache(cache);
-    console.log(`[SCRAPER] Refresh complete -- ${combined.length} products cached.`);
+    console.log(`[SCRAPER] Refresh complete — ${cache.products.length} products cached.`);
     return cache;
 }
 
