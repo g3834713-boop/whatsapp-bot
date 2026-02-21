@@ -310,7 +310,33 @@ app.post('/api/autoreply', (req, res) => {
     } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
-// ── Socket.io: send current state to new connections ─────────────────────────
+// ── API: payment images ───────────────────────────────────────────────────────
+const IMAGES_DIR = path.join(__dirname, '..', 'images');
+
+// Serve an image by slug (pay, ship, teller …)
+app.get('/api/images/:name', (req, res) => {
+    if (!/^[a-zA-Z0-9_-]+$/.test(req.params.name)) return res.status(400).end();
+    const candidates = [req.params.name + '.png', req.params.name + '.PNG']
+        .map(n => path.join(IMAGES_DIR, n));
+    const found = candidates.find(p => fs.existsSync(p));
+    if (!found) return res.status(404).end();
+    res.sendFile(found);
+});
+
+// Upload a new image via base64 JSON: { name: "pay"|"ship", data: "<base64>" }
+app.post('/api/images/upload', (req, res) => {
+    try {
+        const { name, data } = req.body;
+        if (!name || !/^[a-zA-Z0-9_-]+$/.test(name)) return res.status(400).json({ ok: false, error: 'Invalid name' });
+        if (!data) return res.status(400).json({ ok: false, error: 'No data' });
+        if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
+        fs.writeFileSync(path.join(IMAGES_DIR, name + '.png'), Buffer.from(data, 'base64'));
+        // Remove old uppercase variant if present to avoid confusion
+        const upper = path.join(IMAGES_DIR, name + '.PNG');
+        if (fs.existsSync(upper)) fs.unlinkSync(upper);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
 io.on('connection', (socket) => {
     socket.emit('status', botStatus);
     if (lastQRData) socket.emit('qr', lastQRData);

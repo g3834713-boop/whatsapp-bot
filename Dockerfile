@@ -36,9 +36,10 @@ RUN npm ci --omit=dev
 # Copy app source
 COPY . .
 
-# Rename bundled config → config.defaults so the entrypoint can copy it to
-# the Railway persistent volume on first run and symlink /app/config back.
+# Rename bundled config → config.defaults and images → images.defaults so the
+# entrypoint can copy them to the Railway volume on first run and symlink back.
 RUN mv /app/config /app/config.defaults \
+ && mv /app/images /app/images.defaults \
  && chmod +x /app/entrypoint.sh
 
 # Persistent data lives in a Railway volume mounted at /app/data

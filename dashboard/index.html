@@ -202,12 +202,27 @@ textarea{resize:vertical;min-height:60px}
       <div style="margin-top:22px">
         <div class="sec-label" style="margin-top:0">Menu Responses</div>
         <div id="arResponses"></div>
-        <div style="margin-top:18px;padding:14px 16px;background:#1a2a1f;border:1px solid #25d366;border-radius:10px;font-size:13px;color:#a0c4a8;line-height:1.7">
-          <div style="font-weight:700;color:#25d366;margin-bottom:6px">💳 Payment Images</div>
-          Place your payment QR / bank images in the <code style="background:#0d1f14;padding:2px 6px;border-radius:4px">images/</code> folder:<br>
-          • <code style="background:#0d1f14;padding:2px 6px;border-radius:4px">images/pay.png</code> — shown when customer selects <strong>Pay for Order</strong><br>
-          • <code style="background:#0d1f14;padding:2px 6px;border-radius:4px">images/ship.png</code> — shown when customer selects <strong>Pay for Shipping</strong><br>
-          <span style="color:#6b7280;font-size:12px">If an image file is missing, a text fallback is sent automatically.</span>
+        <div style="margin-top:22px">
+          <div class="sec-label">Payment Images</div>
+          <p style="font-size:13px;color:#6b7280;margin-bottom:14px">Sent when a customer chooses a payment option. Each bot stores its own images — upload here to replace them.</p>
+          <div style="display:flex;gap:14px;flex-wrap:wrap">
+            <div class="card" style="flex:1;min-width:200px;padding:16px;text-align:center">
+              <div style="font-size:12px;font-weight:600;color:#25d366;margin-bottom:10px">💳 Pay for Order (pay.png)</div>
+              <img id="imgPreviewPay" src="" onerror="this.style.display='none'" style="max-width:100%;max-height:160px;border-radius:8px;object-fit:contain;background:#0f1117;display:block;margin:0 auto 12px">
+              <label class="btn btn-outline" style="cursor:pointer;font-size:12px">
+                📤 Upload New
+                <input type="file" accept="image/*" style="display:none" onchange="uploadImage('pay',this)">
+              </label>
+            </div>
+            <div class="card" style="flex:1;min-width:200px;padding:16px;text-align:center">
+              <div style="font-size:12px;font-weight:600;color:#25d366;margin-bottom:10px">🚚 Pay for Shipping (ship.png)</div>
+              <img id="imgPreviewShip" src="" onerror="this.style.display='none'" style="max-width:100%;max-height:160px;border-radius:8px;object-fit:contain;background:#0f1117;display:block;margin:0 auto 12px">
+              <label class="btn btn-outline" style="cursor:pointer;font-size:12px">
+                📤 Upload New
+                <input type="file" accept="image/*" style="display:none" onchange="uploadImage('ship',this)">
+              </label>
+            </div>
+          </div>
         </div>
       </div>
       <div class="flex-end">
@@ -603,6 +618,35 @@ async function loadAutoReply() {
       </div>
     </div>
   `).join('');
+  // Load payment image previews (cache-bust so updated images show immediately)
+  const bust = '?t=' + Date.now();
+  const pPay  = document.getElementById('imgPreviewPay');
+  const pShip = document.getElementById('imgPreviewShip');
+  pPay.style.display  = 'block'; pPay.src  = '/api/images/pay'  + bust;
+  pShip.style.display = 'block'; pShip.src = '/api/images/ship' + bust;
+}
+
+async function uploadImage(name, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    const base64 = e.target.result.split(',')[1];
+    const r = await fetch('/api/images/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, data: base64 })
+    }).then(r => r.json()).catch(e => ({ ok: false, error: e.message }));
+    if (r.ok) {
+      toast('✅ ' + name + '.png updated!', 'ok');
+      const bust = '?t=' + Date.now();
+      document.getElementById(name === 'pay' ? 'imgPreviewPay' : 'imgPreviewShip').src = '/api/images/' + name + bust;
+    } else {
+      toast('❌ Upload failed: ' + r.error, 'err');
+    }
+    input.value = ''; // reset so same file can be re-uploaded
+  };
+  reader.readAsDataURL(file);
 }
 async function saveAutoReply() {
   arData.businessName = document.getElementById('arName').value;
