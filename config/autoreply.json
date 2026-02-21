@@ -1,13 +1,68 @@
 {
   "enabled": true,
   "businessName": "JORDAN FX IMPORTS",
-  "responses": {
-    "0": "*🧑Connect with an Agent*\n\nAn agent will be with you shortly. \n-----------------------------------\n_Finding Available agent....._\n\nEnter *10* to exit.",
-    "1": "🛍️ *Services, Products & Pricing*\n\n*VISIT OUR WEBSITE FOR MORE DEALS, PRODUCTS AND PRICES*\ncoming soon\n\n*JOIN OUR WHATSAPP PRE-ORDER GROUP*\nhttps://chat.whatsapp.com/Bb9Rtyng9iUH5ZZiTwbWBG?mode=gi_t\n\n🔙Enter *00* to go Back to Menu.",
-    "2": "🛒 *Place an Order*\n\nGreat! Please send us:\n1. Product name / Product Link\n2. Quantity\n3. Delivery address\n\nWe'll confirm within 30 minutes ✅\n🔙Enter *00* to go Back to Menu.",
-    "3": "📦 *Track my Order*\n\nPlease send your *order number* and we'll check the status in no time!\n🔙Enter *00* to go Back to Menu.",
-    "4": "🛠️ *Customer Support*\n\nDescribe your issue and an agent will respond shortly.\n\n📧 support@jordanfx.com\n🔙Enter *00* to go Back to Menu.",
-    "5": "🕐 *Working Hours*\n\n• Mon – Fri: 8am – 6pm\n• Saturday: 9am – 2pm\n• Sunday: Closed\n\nMessages outside hours are answered the next business day.\n🔙Enter *00* to go Back to Menu.",
-    "6": "💳 *Make Payment*\n\nChoose your payment type:\n\n1️⃣ *Pay for Order*\n2️⃣ *Pay for Shipping*\n\n_Reply with 1 or 2 to proceed_\n🔙Enter *00* to go Back to Menu."
-  }
+  "menuItems": [
+    {
+      "key": "1",
+      "label": "🛍️ Services, Products & Pricing",
+      "response": "🛍️ *Services, Products & Pricing*\n\n*VISIT OUR WEBSITE FOR MORE DEALS, PRODUCTS AND PRICES*\ncoming soon\n\n*JOIN OUR WHATSAPP PRE-ORDER GROUP*\nhttps://chat.whatsapp.com/Bb9Rtyng9iUH5ZZiTwbWBG?mode=gi_t\n\n🔙Enter *00* to go Back to Menu.",
+      "agentMode": false,
+      "subItems": []
+    },
+    {
+      "key": "2",
+      "label": "🛒 Place an Order",
+      "response": "🛒 *Place an Order*\n\nGreat! Please send us:\n1. Product name / Product Link\n2. Quantity\n3. Delivery address\n\nWe'll confirm within 30 minutes ✅\n🔙Enter *00* to go Back to Menu.",
+      "agentMode": false,
+      "subItems": []
+    },
+    {
+      "key": "3",
+      "label": "📦 Track my Order",
+      "response": "📦 *Track my Order*\n\nPlease send your *order number* and we'll check the status in no time!\n🔙Enter *00* to go Back to Menu.",
+      "agentMode": false,
+      "subItems": []
+    },
+    {
+      "key": "4",
+      "label": "🛠️ Customer Support",
+      "response": "🛠️ *Customer Support*\n\nDescribe your issue and an agent will respond shortly.\n\n📧 support@jordanfx.com\n🔙Enter *00* to go Back to Menu.",
+      "agentMode": false,
+      "subItems": []
+    },
+    {
+      "key": "5",
+      "label": "🕐 Working Hours",
+      "response": "🕐 *Working Hours*\n\n• Mon – Fri: 8am – 6pm\n• Saturday: 9am – 2pm\n• Sunday: Closed\n\nMessages outside hours are answered the next business day.\n🔙Enter *00* to go Back to Menu.",
+      "agentMode": false,
+      "subItems": []
+    },
+    {
+      "key": "6",
+      "label": "💳 Make Payment",
+      "response": "💳 *Make Payment*\n\nChoose your payment type:\n\n1️⃣ *Pay for Order*\n2️⃣ *Pay for Shipping*\n\n_Reply with 1 or 2 to proceed_\n🔙Enter *00* to go Back to Menu.",
+      "agentMode": false,
+      "subItems": [
+        {
+          "key": "1",
+          "label": "💳 Pay for Order",
+          "response": "💳 *Pay for Order*\n\nAfter payment, please submit your screenshot.\n\n_Enter *10* to exit_",
+          "image": "pay"
+        },
+        {
+          "key": "2",
+          "label": "🚚 Pay for Shipping",
+          "response": "🚚 *Pay for Shipping*\n\nAfter payment, please submit your screenshot.\n\n_Enter *10* to exit_",
+          "image": "ship"
+        }
+      ]
+    },
+    {
+      "key": "0",
+      "label": "🧑 Connect with an Agent",
+      "response": "*🧑Connect with an Agent*\n\nAn agent will be with you shortly. \n-----------------------------------\n_Finding Available agent....._\n\nEnter *10* to exit.",
+      "agentMode": true,
+      "subItems": []
+    }
+  ]
 }

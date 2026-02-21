@@ -13,7 +13,25 @@ const { isOOO, getOOOMessage } = require('./ooo');
 const CONFIG_PATH     = path.join(__dirname, '..', 'config', 'autoreply.json');
 const MESSAGES_PATH   = path.join(__dirname, '..', 'config', 'messages.json');
 const AGENT_MODE_FILE = path.join(__dirname, '..', 'config', 'agentmode.json');
-const OPTION_KEYS     = ['1', '2', '3', '4', '5', '6', '0'];
+
+// Normalise old { responses:{...} } format to new { menuItems:[...] } format
+function normalizeConfig(raw) {
+    if (raw.menuItems && Array.isArray(raw.menuItems) && raw.menuItems.length) return raw;
+    const ORDER = ['1','2','3','4','5','6','0'];
+    const menuItems = ORDER
+        .filter(k => raw.responses && raw.responses[k])
+        .map(k => ({
+            key:       k,
+            label:     (raw.responses[k].split('\n')[0] || '').replace(/\*/g,'').trim(),
+            response:  raw.responses[k],
+            agentMode: k === '0',
+            subItems:  k === '6' ? [
+                { key:'1', label:'💳 Pay for Order',    response:'After payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'pay'  },
+                { key:'2', label:'🚚 Pay for Shipping', response:'After payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'ship' },
+            ] : [],
+        }));
+    return Object.assign({}, raw, { menuItems });
+}
 
 // ── Messages config ───────────────────────────────────────────────────────────
 const MSG_DEFAULTS = {
@@ -52,8 +70,8 @@ function fill(template, vars) {
 // Tracks which contacts have already been shown the menu this session
 const menuShown = new Set();
 
-// Tracks which contacts are currently in the payment sub-menu
-const paymentSubMenu = new Set();
+// Map: contactId → parent item key (while user is navigating a sub-menu)
+const submenuContext = new Map();
 
 // ── Agent mode ────────────────────────────────────────────────────────────────
 // Map: contactId → timestamp when agent mode was last refreshed
@@ -160,9 +178,9 @@ function trackBotMessage(sentMsg) {
 
 function loadConfig() {
     try {
-        return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+        return normalizeConfig(JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')));
     } catch (e) {
-        return { enabled: false, businessName: 'My Business', responses: {} };
+        return { enabled: false, businessName: 'My Business', menuItems: [] };
     }
 }
 
@@ -187,16 +205,14 @@ function normalize(str) {
 }
 
 /**
- * Builds { normalizedLabel → key } from live config so typing the menu
- * item text (or a close match) returns the right response.
+ * Builds { normalizedLabel → key } from live menuItems config so typing
+ * the menu item text (or a close match) returns the right response.
  */
 function buildLabelMap(cfg) {
     const map = {};
-    const r   = cfg.responses || {};
-    OPTION_KEYS.forEach(k => {
-        if (!r[k]) return;
-        const label = normalize(r[k].split('\n')[0]);
-        if (label) map[label] = k;
+    (cfg.menuItems || []).forEach(item => {
+        const label = normalize(item.label || (item.response || '').split('\n')[0]);
+        if (label && item.key) map[label] = item.key;
     });
     return map;
 }
@@ -205,9 +221,7 @@ function buildLabelMap(cfg) {
 function matchLabel(input, labelMap) {
     const norm = normalize(input);
     if (!norm) return null;
-    // Exact label match
     if (labelMap[norm]) return labelMap[norm];
-    // Input is contained in a label or label is contained in input
     for (const [label, key] of Object.entries(labelMap)) {
         if (label.includes(norm) || norm.includes(label)) return key;
     }
@@ -215,17 +229,17 @@ function matchLabel(input, labelMap) {
 }
 
 function buildMenuText(cfg) {
-    const msgs   = loadMessages();
-    const name   = cfg.businessName || 'My Business';
-    const r      = cfg.responses || {};
-    const emoji  = { '1':'1️⃣', '2':'2️⃣', '3':'3️⃣', '4':'4️⃣', '5':'5️⃣', '6':'6️⃣', '0':'0️⃣' };
-    const lines  = OPTION_KEYS.filter(k => r[k]).map(k => {
-        const label = r[k].split('\n')[0].replace(/\*/g, '').trim();
-        return `${emoji[k]} ${label.slice(0, 60)}`;
+    const msgs  = loadMessages();
+    const name  = cfg.businessName || 'My Business';
+    const items = cfg.menuItems || [];
+    const EMOJI = {'0':'0️⃣','1':'1️⃣','2':'2️⃣','3':'3️⃣','4':'4️⃣','5':'5️⃣','6':'6️⃣','7':'7️⃣','8':'8️⃣','9':'9️⃣'};
+    const lines = items.map(item => {
+        const icon  = EMOJI[item.key] || `${item.key}.`;
+        const label = (item.label || (item.response || '').split('\n')[0]).replace(/\*/g,'').trim();
+        return `${icon} ${label.slice(0, 60)}`;
     });
     const greeting = fill(msgs.menuGreeting, { businessName: name });
-    const footer   = msgs.menuFooter;
-    return [greeting, '', ...lines, '', footer].join('\n');
+    return [greeting, '', ...lines, '', msgs.menuFooter].join('\n');
 }
 
 /** Send a one-time welcome message with discount code to a brand-new customer */
@@ -292,10 +306,12 @@ async function handleAutoReply(client, msg) {
         if (!bodyRaw) return false;
 
         // Resolve the menu key early so we can decide whether to bypass hours checks.
-        // Any recognised command (numbers, keywords, label text) bypasses hours/OOO
-        // so customers can still browse the menu and get replies at any time.
         const _labelMap    = buildLabelMap(cfg);
-        const _resolvedKey = KEYWORDS[bodyLow] || KEYWORDS[bodyRaw] || matchLabel(bodyRaw, _labelMap);
+        const _itemKeys    = new Set((cfg.menuItems || []).map(i => i.key));
+        const _resolvedKey = KEYWORDS[bodyLow] || KEYWORDS[bodyRaw]
+            || (_itemKeys.has(bodyLow) ? bodyLow : null)
+            || (_itemKeys.has(bodyRaw) ? bodyRaw : null)
+            || matchLabel(bodyRaw, _labelMap);
         const isBypassCmd  = !!_resolvedKey;
 
         // ── Out of Office check (overrides working hours) ─────────────────────
@@ -318,42 +334,47 @@ async function handleAutoReply(client, msg) {
             return true;
         }
         // ─────────────────────────────────────────────────────────────────────
-        if (paymentSubMenu.has(from)) {
-            paymentSubMenu.delete(from);
-            const imgDir  = path.join(__dirname, '..', 'images');
-            const exitHint = '\n\n_Enter *10* to exit_';
-
-            if (bodyLow === '1' || bodyLow.includes('order')) {
-                try {
-                    const media = MessageMedia.fromFilePath(path.join(imgDir, 'pay.png'));
-                    trackBotMessage(await client.sendMessage(from, media, { caption: '💳 *Pay for Order*\n\nAfter payment, please submit your screenshot.' + exitHint }));
-                } catch (e) {
-                    trackBotMessage(await client.sendMessage(from, '💳 *Pay for Order*\n\nPlease send payment to our account.\n\nAfter payment, please submit your screenshot.' + exitHint));
+        // ── Generic sub-menu handler ───────────────────────────────────────────
+        if (submenuContext.has(from)) {
+            const parentKey  = submenuContext.get(from);
+            const parentItem = (cfg.menuItems || []).find(i => i.key === parentKey);
+            if (parentItem && parentItem.subItems && parentItem.subItems.length) {
+                const subItem = parentItem.subItems.find(s =>
+                    s.key === bodyLow || s.key === bodyRaw ||
+                    normalize(s.label || '').includes(normalize(bodyRaw)) ||
+                    normalize(bodyRaw).includes(normalize(s.label || ''))
+                );
+                if (subItem) {
+                    submenuContext.delete(from);
+                    const imgDir = path.join(__dirname, '..', 'images');
+                    if (subItem.image) {
+                        const imgFile = path.join(imgDir, subItem.image + '.png');
+                        try {
+                            const media = MessageMedia.fromFilePath(imgFile);
+                            trackBotMessage(await client.sendMessage(from, media, { caption: subItem.response || subItem.label }));
+                        } catch (_) {
+                            trackBotMessage(await client.sendMessage(from, subItem.response || subItem.label));
+                        }
+                    } else {
+                        trackBotMessage(await client.sendMessage(from, subItem.response || subItem.label));
+                    }
+                    console.log(`[AUTO-REPLY] Sub-item "${subItem.key}" of "${parentKey}" sent to ${from}`);
+                    return true;
+                } else {
+                    // Invalid selection — re-show parent response
+                    trackBotMessage(await client.sendMessage(from, parentItem.response));
+                    return true;
                 }
-                return true;
+            } else {
+                submenuContext.delete(from); // parent no longer has subItems
             }
-
-            if (bodyLow === '2' || bodyLow.includes('ship')) {
-                try {
-                    const media = MessageMedia.fromFilePath(path.join(imgDir, 'ship.png'));
-                    trackBotMessage(await client.sendMessage(from, media, { caption: '🚚 *Pay for Shipping*\n\nAfter payment, please submit your screenshot.' + exitHint }));
-                } catch (e) {
-                    trackBotMessage(await client.sendMessage(from, '🚚 *Pay for Shipping*\n\nPlease send payment to our shipping account.\n\nAfter payment, please submit your screenshot.' + exitHint));
-                }
-                return true;
-            }
-
-            // didn't pick a valid payment option — re-show payment sub-menu
-            paymentSubMenu.add(from);
-            trackBotMessage(await client.sendMessage(from, cfg.responses['6'] || '💳 *Make Payment*\n\n1️⃣ Pay for Order\n2️⃣ Pay for Shipping'));
-            return true;
         }
         // ─────────────────────────────────────────────────────────────────
 
         const key = _resolvedKey;
 
         if (key === 'exit') {
-            paymentSubMenu.delete(from);
+            submenuContext.delete(from);
             menuShown.delete(from);
             trackBotMessage(await client.sendMessage(from, loadMessages().exit));
             console.log('[AUTO-REPLY] Exit sent to ' + from);
@@ -361,7 +382,7 @@ async function handleAutoReply(client, msg) {
         }
 
         if (key === 'menu') {
-            paymentSubMenu.delete(from);
+            submenuContext.delete(from);
             if (newCustomer && !newCustomer.welcomeSent) {
                 await sendWelcome(client, from, newCustomer, cfg);
             }
@@ -371,38 +392,40 @@ async function handleAutoReply(client, msg) {
             return true;
         }
 
-        if (key && cfg.responses[key]) {
-            if (key === '0') {
-                agentMode.set(from, Date.now());
-                saveAgentMode();
-                console.log('[AGENT] ON for ' + from);
-                // Notify the agent (bot owner) and add to the queue
-                try {
-                    // client.info.wid._serialized returns @lid on newer WhatsApp —
-                    // use .user + @c.us to get the proper sendable JID.
-                    const ownerJid = (client.info.wid.user || '') + '@c.us';
-                    const disp     = contactName || from.split('@')[0];
-                    const notif    = fill(loadMessages().agentNotify, {
-                        name:   disp,
-                        number: from.split('@')[0],
-                        time:   new Date().toLocaleString(),
-                    });
-                    // Temporarily mark ownerJid as "bot is replying" so the
-                    // message_create race doesn't put the owner into agent mode.
-                    botReplying.add(ownerJid);
+        if (key) {
+            const matchedItem = (cfg.menuItems || []).find(i => i.key === key);
+            const responseText = matchedItem ? matchedItem.response : null;
+            if (responseText) {
+                if (matchedItem.agentMode) {
+                    agentMode.set(from, Date.now());
+                    saveAgentMode();
+                    console.log('[AGENT] ON for ' + from);
                     try {
-                        trackBotMessage(await client.sendMessage(ownerJid, notif));
-                    } finally {
-                        botReplying.delete(ownerJid);
-                    }
-                    addToQueue(from, disp);
-                } catch (e) { console.error('[AGENT] Notify error:', e.message); }
+                        const ownerJid = (client.info.wid.user || '') + '@c.us';
+                        const disp     = contactName || from.split('@')[0];
+                        const notif    = fill(loadMessages().agentNotify, {
+                            name:   disp,
+                            number: from.split('@')[0],
+                            time:   new Date().toLocaleString(),
+                        });
+                        botReplying.add(ownerJid);
+                        try {
+                            trackBotMessage(await client.sendMessage(ownerJid, notif));
+                        } finally {
+                            botReplying.delete(ownerJid);
+                        }
+                        addToQueue(from, disp);
+                    } catch (e) { console.error('[AGENT] Notify error:', e.message); }
+                }
+                trackBotMessage(await client.sendMessage(from, responseText));
+                menuShown.add(from);
+                // If this item has sub-items, enter sub-menu context
+                if (matchedItem.subItems && matchedItem.subItems.length) {
+                    submenuContext.set(from, key);
+                }
+                console.log('[AUTO-REPLY] Replied "' + key + '" to ' + from);
+                return true;
             }
-            trackBotMessage(await client.sendMessage(from, cfg.responses[key]));
-            menuShown.add(from);
-            if (key === '6') paymentSubMenu.add(from);
-            console.log('[AUTO-REPLY] Replied "' + key + '" to ' + from);
-            return true;
         }
 
         // Unrecognised message — show menu on first contact, nudge after that

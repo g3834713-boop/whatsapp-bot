@@ -115,6 +115,20 @@ textarea{resize:vertical;min-height:60px}
 .chats-stats .stat .num{font-size:22px;font-weight:700;color:#25d366}
 .chats-stats .stat .lbl2{font-size:11px;color:#4b5563;text-transform:uppercase;letter-spacing:.5px}
 .chats-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+
+/* Menu Builder */
+.mi-card{background:#0d1520;border:1px solid #1e2535;border-radius:10px;margin-bottom:10px;overflow:hidden}
+.mi-header{display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer;user-select:none}
+.mi-header:hover{background:#111d30}
+.mi-key-badge{background:#25d366;color:#0a0a0a;font-weight:800;font-size:12px;border-radius:999px;min-width:26px;height:26px;display:flex;align-items:center;justify-content:center;flex-shrink:0;padding:0 6px}
+.mi-label-text{flex:1;font-size:13.5px;color:#e2e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mi-arrow{color:#4b5563;font-size:12px;flex-shrink:0;margin-left:4px}
+.mi-body{display:none;padding:14px;border-top:1px solid #1e2535;background:#0f1117}
+.mi-grid{display:flex;gap:12px;align-items:flex-end}
+.si-row{background:#111b2a;border:1px solid #243047;border-radius:8px;padding:12px;margin-top:8px}
+.btn-icon{background:none;border:1px solid #334155;border-radius:6px;color:#94a3b8;cursor:pointer;padding:4px 8px;font-size:12px;transition:.15s;flex-shrink:0}
+.btn-icon:hover{background:#1e2d42;color:#e2e8f0}
+.btn-icon.danger:hover{background:#3d1111;color:#f87171;border-color:#7f1d1d}
 </style>
 </head>
 <body>
@@ -201,8 +215,10 @@ textarea{resize:vertical;min-height:60px}
       <label class="lbl">Business Name</label>
       <input type="text" id="arName" placeholder="My Business">
       <div style="margin-top:22px">
-        <div class="sec-label" style="margin-top:0">Menu Responses</div>
-        <div id="arResponses"></div>
+        <div class="sec-label" style="margin-top:0">Menu Items</div>
+        <p style="font-size:12px;color:#4b5563;margin-bottom:12px">Each item appears in the main menu. Items with sub-items show a nested picker when selected. Use ↑↓ to reorder.</p>
+        <div id="menuBuilder"></div>
+        <button class="btn btn-add" style="width:100%;margin-top:8px;font-size:13px" onclick="addMenuItem()">➕ Add Menu Item</button>
         <div style="margin-top:22px">
           <div class="sec-label">Payment Images</div>
           <p style="font-size:13px;color:#6b7280;margin-bottom:14px">Sent when a customer chooses a payment option. Each bot stores its own images — upload here to replace them.</p>
@@ -447,6 +463,7 @@ let socket; // initialised in initDashboard()
 let status = 'disconnected';
 let schedulesData = [];
 let arData = {};
+let menuItems = [];
 let chatsData = { groups: [], channels: [] };
 
 function setStatus(s) {
@@ -677,25 +694,182 @@ async function deleteSchedule(i) {
 //  Auto-Reply 
 async function loadAutoReply() {
   arData = await fetch('/api/autoreply').then(r=>r.json());
-  document.getElementById('arEnabled').checked = arData.enabled!==false;
-  document.getElementById('arName').value = arData.businessName||'';
-  const keys=['1','2','3','4','5','6','0'];
-  const labels={'1':'1  Products & Pricing','2':'2  Place an Order','3':'3  Track Order','4':'4  Customer Support','5':'5  Working Hours','6':'6  Make Payment','0':'0  Talk to Human Agent'};
-  document.getElementById('arResponses').innerHTML = keys.map(k=>`
-    <div class="resp-row">
-      <div class="resp-num">${k}</div>
-      <div style="flex:1">
-        <label class="lbl" style="margin-top:0">${labels[k]}</label>
-        <textarea oninput="arData.responses['${k}']=this.value">${esc2((arData.responses||{})[k]||'')}</textarea>
-      </div>
-    </div>
-  `).join('');
-  // Load payment image previews (cache-bust so updated images show immediately)
+  document.getElementById('arEnabled').checked = arData.enabled !== false;
+  document.getElementById('arName').value = arData.businessName || '';
+  menuItems = (arData.menuItems || []).map(item => Object.assign({ agentMode: false, subItems: [] }, item));
+  renderMenuBuilder();
   const bust = '?t=' + Date.now();
   const pPay  = document.getElementById('imgPreviewPay');
   const pShip = document.getElementById('imgPreviewShip');
   pPay.style.display  = 'block'; pPay.src  = '/api/images/pay'  + bust;
   pShip.style.display = 'block'; pShip.src = '/api/images/ship' + bust;
+}
+
+// ── Menu Builder JS ───────────────────────────────────────────────────────────
+function renderMenuBuilder() {
+  const container = document.getElementById('menuBuilder');
+  if (!container) return;
+  container.innerHTML = menuItems.map((item, i) => _miHTML(item, i)).join('');
+}
+
+function _miHTML(item, i) {
+  const subHTML = (item.subItems || []).map((s, j) => _siHTML(i, j, s)).join('');
+  return `<div class="mi-card" id="mi-${i}">
+  <div class="mi-header" onclick="toggleMI(${i})">
+    <span class="mi-key-badge">${esc(item.key)}</span>
+    <span class="mi-label-text" id="mi-lbl-${i}">${esc(item.label || '(untitled)')}</span>
+    <div style="display:flex;gap:4px;align-items:center">
+      ${i > 0 ? `<button class="btn-icon" title="Move up" onclick="moveMI(${i},-1);event.stopPropagation()">↑</button>` : '<span style="width:30px"></span>'}
+      ${i < menuItems.length-1 ? `<button class="btn-icon" title="Move down" onclick="moveMI(${i},1);event.stopPropagation()">↓</button>` : '<span style="width:30px"></span>'}
+      <button class="btn-icon danger" title="Delete" onclick="removeMI(${i});event.stopPropagation()">🗑</button>
+      <span class="mi-arrow" id="mi-arr-${i}">▸</span>
+    </div>
+  </div>
+  <div class="mi-body" id="mi-body-${i}">
+    <div class="mi-grid">
+      <div>
+        <label class="lbl" style="font-size:11px">Key (digit/letter)</label>
+        <input type="text" class="mi-key-inp" data-idx="${i}" value="${esc(item.key)}" maxlength="5" placeholder="1" style="width:64px">
+      </div>
+      <div style="flex:1">
+        <label class="lbl" style="font-size:11px">Label (shown in menu list)</label>
+        <input type="text" class="mi-label-inp" data-idx="${i}" value="${esc(item.label||'')}" placeholder="e.g. 🛍️ Products &amp; Pricing">
+      </div>
+    </div>
+    <div style="margin-top:10px">
+      <label class="lbl" style="font-size:11px">Response (full message sent to customer)</label>
+      <textarea class="mi-resp-ta" data-idx="${i}" rows="5" style="font-size:12px;font-family:monospace">${esc2(item.response||'')}</textarea>
+    </div>
+    <div style="margin-top:10px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;color:#e2e8f0">
+        <input type="checkbox" class="mi-agent-chk" data-idx="${i}" ${item.agentMode ? 'checked' : ''}>
+        <span>🧑‍💻 Activates <b>Agent Mode</b> — bot stays silent &amp; notifies owner</span>
+      </label>
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid #1e2535">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div>
+          <div class="sec-label" style="margin:0">Sub-menu Items</div>
+          <p style="font-size:11px;color:#4b5563;margin-top:2px">After selecting this option, user enters a sub-menu and replies again.</p>
+        </div>
+        <button class="btn btn-add" style="font-size:11px;padding:5px 12px" onclick="addSubItem(${i})">➕ Add Sub-item</button>
+      </div>
+      <div id="mi-subs-${i}">${subHTML || '<p style="font-size:12px;color:#4b5563">No sub-items — this item replies directly.</p>'}</div>
+    </div>
+  </div>
+</div>`;
+}
+
+function _siHTML(i, j, s) {
+  return `<div class="si-row" id="si-${i}-${j}">
+  <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:8px">
+    <div>
+      <label class="lbl" style="font-size:10px">Key</label>
+      <input type="text" class="si-key-inp" data-pi="${i}" data-si="${j}" value="${esc(s.key||'')}" maxlength="5" placeholder="1" style="width:55px">
+    </div>
+    <div style="flex:1">
+      <label class="lbl" style="font-size:10px">Label</label>
+      <input type="text" class="si-label-inp" data-pi="${i}" data-si="${j}" value="${esc(s.label||'')}" placeholder="e.g. 💳 Pay for Order">
+    </div>
+    <div>
+      <label class="lbl" style="font-size:10px">Image slug</label>
+      <input type="text" class="si-image-inp" data-pi="${i}" data-si="${j}" value="${esc(s.image||'')}" placeholder="pay" style="width:70px" title="Filename without extension in /images folder (e.g. pay, ship)">
+    </div>
+    <button class="btn-icon danger" onclick="removeSubItem(${i},${j})" title="Remove">🗑</button>
+  </div>
+  <label class="lbl" style="font-size:10px">Response</label>
+  <textarea class="si-resp-ta" data-pi="${i}" data-si="${j}" rows="3" style="font-size:12px;font-family:monospace">${esc2(s.response||'')}</textarea>
+</div>`;
+}
+
+function toggleMI(i) {
+  const body = document.getElementById('mi-body-'+i);
+  const arr  = document.getElementById('mi-arr-'+i);
+  if (!body) return;
+  const open = body.style.display === 'block';
+  body.style.display = open ? 'none' : 'block';
+  if (arr) arr.textContent = open ? '▸' : '▾';
+}
+
+function syncMenuItemsFromDOM() {
+  document.querySelectorAll('.mi-card').forEach((card, i) => {
+    if (!menuItems[i]) return;
+    const k = card.querySelector('.mi-key-inp');
+    const l = card.querySelector('.mi-label-inp');
+    const r = card.querySelector('.mi-resp-ta');
+    const a = card.querySelector('.mi-agent-chk');
+    if (k) menuItems[i].key       = k.value.trim();
+    if (l) menuItems[i].label     = l.value;
+    if (r) menuItems[i].response  = r.value;
+    if (a) menuItems[i].agentMode = a.checked;
+    card.querySelectorAll('.si-row').forEach((srow, j) => {
+      if (!menuItems[i].subItems || menuItems[i].subItems[j] === undefined) return;
+      const sk = srow.querySelector('.si-key-inp');
+      const sl = srow.querySelector('.si-label-inp');
+      const sr = srow.querySelector('.si-resp-ta');
+      const si = srow.querySelector('.si-image-inp');
+      if (sk) menuItems[i].subItems[j].key      = sk.value.trim();
+      if (sl) menuItems[i].subItems[j].label    = sl.value;
+      if (sr) menuItems[i].subItems[j].response = sr.value;
+      if (si) menuItems[i].subItems[j].image    = si.value.trim();
+    });
+  });
+}
+
+function moveMI(i, dir) {
+  syncMenuItemsFromDOM();
+  const j = i + dir;
+  if (j < 0 || j >= menuItems.length) return;
+  [menuItems[i], menuItems[j]] = [menuItems[j], menuItems[i]];
+  renderMenuBuilder();
+}
+
+function removeMI(i) {
+  if (!confirm('Delete this menu item?')) return;
+  syncMenuItemsFromDOM();
+  menuItems.splice(i, 1);
+  renderMenuBuilder();
+}
+
+function addMenuItem() {
+  syncMenuItemsFromDOM();
+  const usedKeys = new Set(menuItems.map(m => m.key));
+  let nextKey = '';
+  for (let n = 1; n <= 20; n++) {
+    if (!usedKeys.has(String(n))) { nextKey = String(n); break; }
+  }
+  menuItems.push({ key: nextKey, label: '', response: '', agentMode: false, subItems: [] });
+  renderMenuBuilder();
+  setTimeout(() => {
+    const idx  = menuItems.length - 1;
+    const body = document.getElementById('mi-body-'+idx);
+    const arr  = document.getElementById('mi-arr-'+idx);
+    if (body) body.style.display = 'block';
+    if (arr)  arr.textContent    = '▾';
+    const kInp = document.querySelector(`#mi-${idx} .mi-key-inp`);
+    if (kInp) kInp.focus();
+  }, 50);
+}
+
+function addSubItem(i) {
+  syncMenuItemsFromDOM();
+  if (!menuItems[i].subItems) menuItems[i].subItems = [];
+  menuItems[i].subItems.push({ key: '', label: '', response: '', image: '' });
+  renderMenuBuilder();
+  const body = document.getElementById('mi-body-'+i);
+  const arr  = document.getElementById('mi-arr-'+i);
+  if (body) body.style.display = 'block';
+  if (arr)  arr.textContent    = '▾';
+}
+
+function removeSubItem(i, j) {
+  syncMenuItemsFromDOM();
+  menuItems[i].subItems.splice(j, 1);
+  renderMenuBuilder();
+  const body = document.getElementById('mi-body-'+i);
+  const arr  = document.getElementById('mi-arr-'+i);
+  if (body) body.style.display = 'block';
+  if (arr)  arr.textContent    = '▾';
 }
 
 async function uploadImage(name, input) {
@@ -721,10 +895,16 @@ async function uploadImage(name, input) {
   reader.readAsDataURL(file);
 }
 async function saveAutoReply() {
+  syncMenuItemsFromDOM();
   arData.businessName = document.getElementById('arName').value;
-  arData.enabled = document.getElementById('arEnabled').checked;
-  const r = await fetch('/api/autoreply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(arData)}).then(r=>r.json());
-  toast(r.ok?' Auto-Reply saved!':' '+r.error, r.ok?'ok':'err');
+  arData.enabled      = document.getElementById('arEnabled').checked;
+  arData.menuItems    = menuItems;
+  const r = await fetch('/api/autoreply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(arData),
+  }).then(r => r.json());
+  toast(r.ok ? '✅ Menu saved!' : '❌ ' + r.error, r.ok ? 'ok' : 'err');
 }
 
 // ── Messages & Hours ─────────────────────────────────────────────────────────
