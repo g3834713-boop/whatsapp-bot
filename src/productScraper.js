@@ -83,8 +83,13 @@ const CATEGORIES = [
 ];
 
 // Comprehensive selector list covering Alibaba DOM from 2022 through 2025
+// SPM param from product URLs reveals the module name: "galleryofferlist"
+// and item type: "normal_offer" -- these map directly to DOM attributes.
 const CARD_SELECTORS = [
-    // Current Alibaba (2024-2025 redesign)
+    // SPM-derived (most reliable, 2024-2025)
+    '[data-spm="normal_offer"]',
+    '[data-spm-anchor-id*="galleryofferlist"]',
+    // Current Alibaba search redesign (2024-2025)
     '.search-card-e-offer',
     '.search-card-e',
     '[class*="search-card"]',
@@ -95,6 +100,8 @@ const CARD_SELECTORS = [
     '.J-offer-wrapper',
     '.list-no-v2-outter',
     // Generic attribute fallbacks
+    '[class*="gallery-offer"]',
+    '[class*="normal-offer"]',
     '[class*="SearchCard"]',
     '[class*="offer-item"]',
     '[class*="offerItem"]',
@@ -154,31 +161,22 @@ async function scrapeCategory(browser, category) {
         });
 
         // Primary: category browse page
-        const browseUrl = `https://www.alibaba.com/${category.slug}_p1.html`;
-        // Fallback: trade-search with category name
         const searchUrl = `https://www.alibaba.com/trade/search?SearchText=${encodeURIComponent(category.name)}&IndexArea=product_en&viewtype=G&page=1`;
 
         const selectorStr = CARD_SELECTORS.join(', ');
         let found = false;
 
-        // -- Try browse URL first --
+        // Alibaba is a SPA -- category pages don't have stable browse URLs.
+        // Use the trade search URL with the category name as the query (broad
+        // terms are significantly less likely to be blocked than niche keywords).
         try {
-            await page.goto(browseUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
-            await page.waitForSelector(selectorStr, { timeout: 12000 });
+            await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+            // Give JS a moment to hydrate the results
+            await sleep(2500);
+            await page.waitForSelector(selectorStr, { timeout: 14000 });
             found = true;
         } catch (_) {
-            console.warn(`[SCRAPER] Browse page empty for "${category.name}", trying search URL...`);
-        }
-
-        // -- Fallback to search URL --
-        if (!found) {
-            try {
-                await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
-                await page.waitForSelector(selectorStr, { timeout: 12000 });
-                found = true;
-            } catch (_) {
-                console.warn(`[SCRAPER] No product cards for "${category.name}" (both URLs tried)`);
-            }
+            console.warn(`[SCRAPER] No product cards for "${category.name}"`);
         }
 
         if (!found) return [];
