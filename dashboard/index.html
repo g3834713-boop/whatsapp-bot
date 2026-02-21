@@ -146,6 +146,7 @@ textarea{resize:vertical;min-height:60px}
     <button class="nav-btn" onclick="nav('messages',this)"><span class="ic">✏️</span>Messages &amp; Hours</button>
     <button class="nav-btn" onclick="nav('settings',this)"><span class="ic">⚙️</span>Bot Settings</button>
     <button class="nav-btn" onclick="nav('backup',this)"><span class="ic">🗄️</span>Backup &amp; Restore</button>
+    <button class="nav-btn" onclick="nav('productfeed',this)"><span class="ic">🛍️</span>Product Feed</button>
     <button class="nav-btn" onclick="nav('campaigns',this)"><span class="ic">📣</span>Campaigns</button>
     <button class="nav-btn" id="navQueue" onclick="nav('queue',this)"><span class="ic">🔔</span>Agent Queue <span id="queueBadge" style="display:none;background:#ef4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:4px;font-weight:700">0</span></button>
   </nav>
@@ -409,6 +410,90 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
+  <!-- PRODUCT FEED -->
+  <div class="page" id="page-productfeed">
+    <h2>Product Feed</h2>
+    <p class="sub">Automatically post product listings with factory prices from Alibaba to a WhatsApp group every morning.</p>
+
+    <!-- Settings card -->
+    <div class="card">
+      <div class="card-title">⚙️ Feed Settings</div>
+      <div class="tog" style="margin:14px 0 20px">
+        <input type="checkbox" id="pf_enabled">
+        <span style="font-size:14px;font-weight:600;color:#e2e8f0">Enable daily product feed</span>
+      </div>
+
+      <label class="lbl">Target Group</label>
+      <select id="pf_groupId" style="margin-bottom:16px;font-size:13px">
+        <option value="">— select a group —</option>
+      </select>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:14px;margin-bottom:16px">
+        <div>
+          <label class="lbl">Start Hour (0–23)</label>
+          <input type="number" id="pf_startHour" min="0" max="23" value="8" style="font-family:monospace">
+        </div>
+        <div>
+          <label class="lbl">Start Minute</label>
+          <input type="number" id="pf_startMinute" min="0" max="59" value="0" style="font-family:monospace">
+        </div>
+        <div>
+          <label class="lbl">Posts per day</label>
+          <input type="number" id="pf_postsPerDay" min="1" max="50" value="12" style="font-family:monospace">
+        </div>
+        <div>
+          <label class="lbl">Interval (minutes)</label>
+          <input type="number" id="pf_intervalMinutes" min="1" max="60" value="2" style="font-family:monospace">
+        </div>
+        <div>
+          <label class="lbl">Names per post</label>
+          <input type="number" id="pf_namesPerPost" min="2" max="15" value="6" style="font-family:monospace">
+        </div>
+      </div>
+
+      <div class="tog" style="margin-bottom:20px">
+        <input type="checkbox" id="pf_autoScrape" checked>
+        <span style="font-size:13px;color:#94a3b8">Auto-refresh product cache daily at midnight</span>
+      </div>
+
+      <div class="flex-end" style="gap:10px">
+        <button class="btn btn-primary" onclick="saveFeedConfig()">💾 Save Settings</button>
+        <button class="btn btn-add" onclick="runTestPost()" style="font-size:13px">▶️ Test Post Now</button>
+      </div>
+    </div>
+
+    <!-- Cache card -->
+    <div class="card" style="margin-top:20px">
+      <div class="card-title">📦 Product Cache</div>
+      <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;margin:12px 0 18px">
+        <div style="text-align:center">
+          <div style="font-size:28px;font-weight:700;color:#38bdf8" id="pf_cacheCount">—</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px">Cached products</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:13px;color:#94a3b8" id="pf_cacheDate">Never scraped</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px">Last updated</div>
+        </div>
+      </div>
+
+      <p class="sub" style="margin-bottom:16px">Scraping fetches products from <strong>alibaba.com</strong> across all categories (~45 keywords, takes 5–8 min). The cache persists on disk — you only need to refresh it occasionally.</p>
+
+      <div id="pf_scrapeProgress" style="display:none;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:12px;color:#94a3b8" id="pf_scrapeLabel">Scraping…</span>
+          <span style="font-size:12px;color:#94a3b8" id="pf_scrapePct">0%</span>
+        </div>
+        <div style="background:#1e2535;border-radius:6px;height:8px;overflow:hidden">
+          <div id="pf_scrapeBar" style="background:#38bdf8;height:100%;width:0%;transition:width .3s"></div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-primary" id="pf_scrapeBtn" onclick="startScrape()">🔄 Refresh Product Cache</button>
+      </div>
+    </div>
+  </div>
+
   <div class="page" id="page-campaigns">
     <h2>Campaigns</h2>
     <p class="sub">Out of office mode, scheduled promo blasts &amp; re-engagement automation.</p>
@@ -588,6 +673,7 @@ function nav(page, btn) {
   if (page==='messages') loadMessages();
   if (page==='settings') loadSettings();
   if (page==='backup')   resetRestoreUI();
+  if (page==='productfeed') loadFeedPage();
 }
 
 //  Chats 
@@ -1255,6 +1341,114 @@ async function saveSettings() {
   toast(r.ok ? '✅ Settings saved!' : '❌ ' + r.error, r.ok ? 'ok' : 'err');
   if (r.ok) renderKeywords(stData.keywords); // re-render to clean blank rows
 }
+
+// ── Product Feed ──────────────────────────────────────────────────────────────
+async function loadFeedPage() {
+  // Load config
+  let cfg = {};
+  try { cfg = await fetch('/api/productfeed/config').then(r => r.json()); } catch(_) {}
+  document.getElementById('pf_enabled').checked        = !!cfg.enabled;
+  document.getElementById('pf_startHour').value        = cfg.startHour       ?? 8;
+  document.getElementById('pf_startMinute').value      = cfg.startMinute     ?? 0;
+  document.getElementById('pf_postsPerDay').value      = cfg.postsPerDay     ?? 12;
+  document.getElementById('pf_intervalMinutes').value  = cfg.intervalMinutes ?? 2;
+  document.getElementById('pf_namesPerPost').value     = cfg.namesPerPost    ?? 6;
+  document.getElementById('pf_autoScrape').checked     = cfg.autoScrapeDaily !== false;
+
+  // Populate group dropdown
+  const sel = document.getElementById('pf_groupId');
+  sel.innerHTML = '<option value="">— select a group —</option>';
+  try {
+    const { groups } = await fetch('/api/chats').then(r => r.json());
+    (groups || []).forEach(g => {
+      const opt = document.createElement('option');
+      opt.value = g.id;
+      opt.textContent = g.name + (g.participantsCount ? ` (${g.participantsCount})` : '');
+      if (cfg.groupId === g.id) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } catch(_) {}
+
+  // Cache stats
+  refreshCacheStats();
+}
+
+async function refreshCacheStats() {
+  try {
+    const c = await fetch('/api/productfeed/cache').then(r => r.json());
+    document.getElementById('pf_cacheCount').textContent = c.totalProducts ?? '0';
+    document.getElementById('pf_cacheDate').textContent  = c.lastUpdated
+      ? new Date(c.lastUpdated).toLocaleString()
+      : 'Never scraped';
+  } catch(_) {}
+}
+
+async function saveFeedConfig() {
+  const sel = document.getElementById('pf_groupId');
+  const groupName = sel.options[sel.selectedIndex]?.text || '';
+  const payload = {
+    enabled:         document.getElementById('pf_enabled').checked,
+    groupId:         sel.value,
+    groupName,
+    startHour:       parseInt(document.getElementById('pf_startHour').value)       || 8,
+    startMinute:     parseInt(document.getElementById('pf_startMinute').value)      || 0,
+    postsPerDay:     parseInt(document.getElementById('pf_postsPerDay').value)      || 12,
+    intervalMinutes: parseInt(document.getElementById('pf_intervalMinutes').value)  || 2,
+    namesPerPost:    parseInt(document.getElementById('pf_namesPerPost').value)     || 6,
+    autoScrapeDaily: document.getElementById('pf_autoScrape').checked,
+  };
+  const r = await fetch('/api/productfeed/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(r => r.json());
+  toast(r.ok ? '✅ Feed settings saved!' : '❌ ' + r.error, r.ok ? 'ok' : 'err');
+}
+
+async function startScrape() {
+  const btn = document.getElementById('pf_scrapeBtn');
+  btn.disabled = true; btn.textContent = '⏳ Scraping…';
+  const r = await fetch('/api/productfeed/scrape', { method: 'POST' }).then(r => r.json());
+  if (!r.ok) {
+    toast('❌ ' + r.error, 'err');
+    btn.disabled = false; btn.textContent = '🔄 Refresh Product Cache';
+    return;
+  }
+  toast('🔄 Scrape started — this takes 5–8 minutes.', 'ok');
+  document.getElementById('pf_scrapeProgress').style.display = 'block';
+}
+
+async function runTestPost() {
+  const r = await fetch('/api/productfeed/test', { method: 'POST' }).then(r => r.json());
+  toast(r.ok ? '✅ ' + r.message : '❌ ' + r.error, r.ok ? 'ok' : 'err');
+}
+
+// Socket listeners for scrape progress (registered once on page load)
+(function registerFeedSocketListeners() {
+  if (typeof socket === 'undefined') {
+    // socket not ready yet — retry after a short delay
+    setTimeout(registerFeedSocketListeners, 1000);
+    return;
+  }
+  socket.on('scrape-progress', ({ done, total, keyword }) => {
+    const pct = Math.round((done / total) * 100);
+    document.getElementById('pf_scrapeBar').style.width  = pct + '%';
+    document.getElementById('pf_scrapePct').textContent  = pct + '%';
+    document.getElementById('pf_scrapeLabel').textContent = `Scraping: "${keyword}"`;
+  });
+  socket.on('scrape-complete', (data) => {
+    document.getElementById('pf_scrapeProgress').style.display = 'none';
+    const btn = document.getElementById('pf_scrapeBtn');
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh Product Cache'; }
+    if (data.error) { toast('❌ Scrape failed: ' + data.error, 'err'); return; }
+    toast(`✅ Scrape complete — ${data.total} products cached!`, 'ok');
+    refreshCacheStats();
+  });
+  socket.on('feed-status',   ({ message }) => toast(message, 'ok'));
+  socket.on('feed-progress', ({ done, total }) =>
+    console.log(`[FEED] ${done}/${total} posts sent`)
+  );
+})();
 
 // ── Backup & Restore ──────────────────────────────────────────────────────────
 let _restoreZipBase64 = null;

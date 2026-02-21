@@ -13,6 +13,8 @@ const QRCode   = require('qrcode');
 const AdmZip = require('adm-zip');
 const { getOOOConfig, setOOO } = require('./ooo');
 const { getAllPromos, addPromo, updatePromo, deletePromo, getReengageConfig, setReengageConfig } = require('./campaigns');
+const { loadCache: loadProductCache, refreshProductCache } = require('./productScraper');
+const { loadFeedConfig, saveFeedConfig, runDailyFeed } = require('./productPoster');
 
 const app    = express();
 const server = http.createServer(app);
@@ -547,6 +549,52 @@ app.post('/api/images/upload', (req, res) => {
         res.json({ ok: true });
     } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
+
+// ── API: product feed ────────────────────────────────────────────────────────
+let _scrapeInProgress = false;
+
+app.get('/api/productfeed/config', (req, res) => {
+    res.json(loadFeedConfig());
+});
+
+app.post('/api/productfeed/config', (req, res) => {
+    try {
+        const cfg = { ...loadFeedConfig(), ...req.body };
+        saveFeedConfig(cfg);
+        res.json({ ok: true });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
+app.get('/api/productfeed/cache', (req, res) => {
+    const cache = loadProductCache();
+    res.json({
+        lastUpdated:   cache.lastUpdated  || null,
+        totalProducts: (cache.products   || []).length,
+        totalScraped:  cache.totalScraped || 0,
+    });
+});
+
+app.post('/api/productfeed/scrape', (req, res) => {
+    if (_scrapeInProgress) return res.json({ ok: false, error: 'A scrape is already running.' });
+    _scrapeInProgress = true;
+    res.json({ ok: true, message: 'Scrape started.' });
+    refreshProductCache((done, total, keyword, count) => {
+        io.emit('scrape-progress', { done, total, keyword, count });
+    }).then(cache => {
+        _scrapeInProgress = false;
+        io.emit('scrape-complete', { total: (cache.products || []).length, lastUpdated: cache.lastUpdated });
+    }).catch(e => {
+        _scrapeInProgress = false;
+        io.emit('scrape-error', { error: e.message });
+    });
+});
+
+app.post('/api/productfeed/test', (req, res) => {
+    if (!botClient) return res.json({ ok: false, error: 'Bot is not connected.' });
+    runDailyFeed(botClient, (evt, data) => io.emit(evt, data)).catch(e => console.error('[FEED] Test run error:', e.message));
+    res.json({ ok: true, message: 'Test feed started. Check the group!' });
+});
+
 io.on('connection', (socket) => {
     socket.emit('status', botStatus);
     if (lastQRData) socket.emit('qr', lastQRData);
@@ -566,4 +614,6 @@ function startDashboard(port = 3000) {
     });
 }
 
-module.exports = { startDashboard, setBotClient, emitQR, emitReady, emitDisconnected, addToQueue, removeFromQueue, setReleaseCallback };
+function emitEvent(event, data) { io.emit(event, data); }
+
+module.exports = { startDashboard, setBotClient, emitQR, emitReady, emitDisconnected, addToQueue, removeFromQueue, setReleaseCallback, emitEvent };

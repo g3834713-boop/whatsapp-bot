@@ -1,0 +1,11 @@
+{
+  "enabled": false,
+  "groupId": "",
+  "groupName": "",
+  "startHour": 8,
+  "startMinute": 0,
+  "postsPerDay": 12,
+  "intervalMinutes": 2,
+  "namesPerPost": 6,
+  "autoScrapeDaily": true
+}

@@ -21,8 +21,9 @@ const CLIENT_ID = process.env.CLIENT_ID || 'whatsapp-bot';
 const { handleCommand } = require('./commands');
 const { startScheduler } = require('./scheduler');
 const { handleAutoReply, agentSentMessage, releaseContact } = require('./autoreply');
-const { startDashboard, setBotClient, emitQR, emitReady, emitDisconnected, setReleaseCallback } = require('./dashboard');
+const { startDashboard, setBotClient, emitQR, emitReady, emitDisconnected, setReleaseCallback, emitEvent } = require('./dashboard');
 const { startCampaigns } = require('./campaigns');
+const { startProductFeedScheduler } = require('./productPoster');
 
 // Create client with persistent session (no re-scan after restart)
 const client = new Client({
@@ -84,6 +85,7 @@ client.on('ready', () => {
     emitReady();
     startScheduler(client);
     startCampaigns(client);
+    startProductFeedScheduler(client, emitEvent);
 });
 
 // Handle messages FROM OTHERS (private chats, groups, channels)
