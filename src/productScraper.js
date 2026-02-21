@@ -1,15 +1,12 @@
 /**
- * Product Scraper -- Alibaba category scraper (Puppeteer edition)
+ * Product Scraper -- Alibaba category scraper (Puppeteer + stealth edition)
  *
- * Alibaba pages are fully JS-rendered -- axios+cheerio only gets the bare
- * HTML shell with no product data.  This module uses Puppeteer (already
- * installed via whatsapp-web.js) to render each category page and extract
- * products from the live DOM.
+ * Root cause of "0 products": Alibaba detects headless Chromium via the
+ * `navigator.webdriver` flag and the AutomationControlled feature, then
+ * serves an empty/CAPTCHA page instead of product cards.
  *
- * Categories are Alibaba's official top-level categories, NOT niche
- * keyword searches.  Each entry has a browse-page slug; if the browse
- * page yields no cards the scraper falls back to a trade-search URL
- * using the category name as the query.
+ * Fix: patch the browser fingerprint via evaluateOnNewDocument before any
+ * page load, plus pass --disable-blink-features=AutomationControlled.
  *
  * A single browser instance is launched per full scrape run, then closed.
  * It does NOT interfere with the WhatsApp client browser.
@@ -20,10 +17,11 @@ const fs        = require('fs');
 const path      = require('path');
 
 const PRODUCTS_FILE = path.join(__dirname, '..', 'config', 'products.json');
+const DEBUG_DIR     = path.join(__dirname, '..', 'config', 'scraper-debug');
 
 const MAX_PER_CAT   = 6;
-const REQ_DELAY_MIN = 6000;
-const REQ_DELAY_MAX = 11000;
+const REQ_DELAY_MIN = 7000;
+const REQ_DELAY_MAX = 13000;
 
 const CHROME_PATH = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
 
@@ -37,11 +35,12 @@ const PUPPETEER_ARGS = [
     '--disable-gpu',
     '--disable-features=IsolateOrigins,site-per-process',
     '--shm-size=256mb',
-    '--window-size=1280,800',
+    '--window-size=1366,768',
+    // KEY: tells Chromium not to expose the Automation flag in the DOM
+    '--disable-blink-features=AutomationControlled',
 ];
 
 // ---- Official Alibaba top-level categories -----------------------------------
-// slug is the path segment used in both browse and search URLs.
 const CATEGORIES = [
     { name: 'Apparel & Accessories',             slug: 'Apparel-Accessories'                },
     { name: 'Consumer Electronics',              slug: 'Consumer-Electronics'               },
@@ -82,24 +81,19 @@ const CATEGORIES = [
     { name: 'Fabrication Services',              slug: 'Manufacturing-Processing-Machinery' },
 ];
 
-// Comprehensive selector list covering Alibaba DOM from 2022 through 2025
-// SPM param from product URLs reveals the module name: "galleryofferlist"
-// and item type: "normal_offer" -- these map directly to DOM attributes.
+// Selectors covering Alibaba DOM 2022-2025.
+// SPM-derived attrs are tried first as they are part of Alibaba's own
+// analytics system and are very stable across redesigns.
 const CARD_SELECTORS = [
-    // SPM-derived (most reliable, 2024-2025)
     '[data-spm="normal_offer"]',
     '[data-spm-anchor-id*="galleryofferlist"]',
-    // Current Alibaba search redesign (2024-2025)
     '.search-card-e-offer',
     '.search-card-e',
     '[class*="search-card"]',
-    // FY23 search cards
     '.fy23-search-card',
-    // Organic gallery (2022-2023)
     '.organic-gallery-offer-outter',
     '.J-offer-wrapper',
     '.list-no-v2-outter',
-    // Generic attribute fallbacks
     '[class*="gallery-offer"]',
     '[class*="normal-offer"]',
     '[class*="SearchCard"]',
@@ -126,11 +120,65 @@ function saveCache(data) {
 
 function getAllCachedProducts() { return loadCache().products || []; }
 
-// ---- Core scraper (Puppeteer) ------------------------------------------------
+// Save a HTML snippet for debugging when a page returns 0 products
+function saveDebugHtml(categoryName, html) {
+    try {
+        if (!fs.existsSync(DEBUG_DIR)) fs.mkdirSync(DEBUG_DIR, { recursive: true });
+        const safe = categoryName.replace(/[^a-z0-9]/gi, '_');
+        const file = path.join(DEBUG_DIR, `${safe}.html`);
+        fs.writeFileSync(file, html.slice(0, 50000)); // save first 50 KB
+        console.log(`[SCRAPER] Debug HTML saved -> ${file}`);
+    } catch (_) {}
+}
+
+// ---- Stealth patches applied before every page load -------------------------
+async function applyStealthPatches(page) {
+    await page.evaluateOnNewDocument(() => {
+        // Hide the webdriver flag
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+        // Fake a real Chrome runtime object
+        window.chrome = {
+            runtime: {
+                connect:          () => {},
+                sendMessage:      () => {},
+                onMessage:        { addListener: () => {} },
+                onConnect:        { addListener: () => {} },
+            },
+        };
+
+        // Fake plugin list (headless has 0 plugins)
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [
+                { name: 'Chrome PDF Plugin'   },
+                { name: 'Chrome PDF Viewer'   },
+                { name: 'Native Client'       },
+            ],
+        });
+
+        // Non-empty language list
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en'],
+        });
+
+        // Permissions API -- headless returns different values
+        const originalQuery = window.navigator.permissions
+            ? window.navigator.permissions.query.bind(window.navigator.permissions)
+            : null;
+        if (originalQuery) {
+            window.navigator.permissions.query = (parameters) =>
+                parameters.name === 'notifications'
+                    ? Promise.resolve({ state: Notification.permission })
+                    : originalQuery(parameters);
+        }
+    });
+}
+
+// ---- Core scraper (Puppeteer + stealth) -------------------------------------
 /**
  * Scrape one Alibaba category using a Puppeteer page.
- * 1. Tries the official category browse page (e.g. /Apparel-Accessories_p1.html)
- * 2. Falls back to trade-search with the category name as the query.
+ * Uses the trade-search URL with the broad category name as the query.
+ * Stealth patches hide headless detection before every page load.
  *
  * @param {import('puppeteer').Browser} browser
  * @param {{ name: string, slug: string }} category
@@ -139,10 +187,13 @@ function getAllCachedProducts() { return loadCache().products || []; }
 async function scrapeCategory(browser, category) {
     const page = await browser.newPage();
     try {
-        // Randomise viewport to reduce bot fingerprint
+        // -- Stealth: apply before goto() --
+        await applyStealthPatches(page);
+
+        // Randomise viewport to avoid constant fingerprint
         await page.setViewport({
-            width:  1280 + Math.floor(Math.random() * 120),
-            height: 800  + Math.floor(Math.random() * 100),
+            width:  1366 + Math.floor(Math.random() * 100),
+            height: 768  + Math.floor(Math.random() * 80),
         });
         await page.setUserAgent(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -151,37 +202,44 @@ async function scrapeCategory(browser, category) {
         await page.setExtraHTTPHeaders({
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-ch-ua-mobile': '?0',
         });
 
-        // Block images/fonts/media -- we pull image URLs from DOM attributes
+        // Block fonts/media only -- allow images so the CDN calls look normal
         await page.setRequestInterception(true);
         page.on('request', req => {
-            if (['image', 'media', 'font'].includes(req.resourceType())) req.abort();
+            if (['media', 'font'].includes(req.resourceType())) req.abort();
             else req.continue();
         });
 
-        // Primary: category browse page
-        const searchUrl = `https://www.alibaba.com/trade/search?SearchText=${encodeURIComponent(category.name)}&IndexArea=product_en&viewtype=G&page=1`;
+        const searchUrl =
+            `https://www.alibaba.com/trade/search` +
+            `?SearchText=${encodeURIComponent(category.name)}` +
+            `&IndexArea=product_en&viewtype=G&page=1`;
+
+        // Use networkidle2 so JS-rendered cards fully hydrate before we query
+        await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 45000 });
+
+        // Extra buffer for lazy-rendered card batches
+        await sleep(3000);
 
         const selectorStr = CARD_SELECTORS.join(', ');
         let found = false;
 
-        // Alibaba is a SPA -- category pages don't have stable browse URLs.
-        // Use the trade search URL with the category name as the query (broad
-        // terms are significantly less likely to be blocked than niche keywords).
         try {
-            await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
-            // Give JS a moment to hydrate the results
-            await sleep(2500);
-            await page.waitForSelector(selectorStr, { timeout: 14000 });
+            await page.waitForSelector(selectorStr, { timeout: 15000 });
             found = true;
         } catch (_) {
-            console.warn(`[SCRAPER] No product cards for "${category.name}"`);
+            // Dump HTML so we can inspect what Alibaba returned
+            const html = await page.content();
+            console.warn(`[SCRAPER] No product cards for "${category.name}" -- check debug HTML`);
+            saveDebugHtml(category.name, html);
         }
 
         if (!found) return [];
 
-        // Extract products from the live DOM
         const products = await page.evaluate((max, categoryName, selectors) => {
             const results = [];
 
@@ -222,7 +280,7 @@ async function scrapeCategory(browser, category) {
                     ? moqEl.textContent.replace(/\s+/g, ' ').trim()
                     : 'MOQ negotiable';
 
-                // Image
+                // Image -- prefer higher-res src variants
                 let imageUrl = '';
                 const img = el.querySelector('img');
                 if (img) {
