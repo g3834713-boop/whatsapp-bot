@@ -89,9 +89,8 @@ app.get('/health', (req, res) => {
     const ss = uptimeSec % 60;
     const uptime = `${hh}h ${mm}m ${ss}s`;
 
-    const ok = botStatus === 'connected';
-    res.status(ok ? 200 : 503).json({
-        status:    ok ? 'ok' : 'degraded',
+    res.status(200).json({
+        status:    botStatus === 'connected' ? 'ok' : 'degraded',
         bot:       botStatus,
         uptime,
         timestamp: new Date().toISOString(),
