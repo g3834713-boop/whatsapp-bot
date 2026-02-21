@@ -931,14 +931,38 @@ async function saveAutoReply() {
 const MSG_FIELDS = ['closed','menuGreeting','menuFooter','exit','nudge','agentNotify','welcome'];
 const WH_DAYS    = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
+// Mirror the hardcoded defaults in autoreply.js — used when messages.json is missing/empty
+const MSG_DEFAULTS = {
+  closed:       "🕐 *We're currently closed*\n\n📋 *Our working hours:*\n• Mon – Fri: 8am – 6pm\n• Saturday: 9am – 2pm\n• Sunday: 11am – 4pm\n\n✅ Your message has been received! We'll get back to you during any of the hours listed above.\nNext available: *{nextDay}* at *{nextOpen}*\n\n_Type *0* to reach an agent or *00* for menu_",
+  menuGreeting: "🏪 Hello! Welcome to *{businessName}*\n\n🙋 *How can we help you today?*",
+  menuFooter:   "👆 *Reply with a number* to choose an option\n_Type *00* anytime to see this menu again_",
+  exit:         "🙏 *Thank you for your service!*\n\nEnter *0* to connect with an agent\nEnter *00* to go back to menu",
+  nudge:        "*Not sure what to look for?*\n\nTalk with an agent directly:\nEnter *0* to connect with an agent\nEnter *00* for the menu.",
+  agentNotify:  "🔔 *New Agent Request*\n\n👤 Client: *{name}*\n📞 Number: +{number}\n🕐 Time: {time}\n\n_The bot is now silent for this conversation._",
+  welcome:      "🎉 *Welcome to {businessName}!*\n\nHi {name}! We're so glad you reached out. 😊\n\n🎁 *Your exclusive first-time gift:*\nDiscount Code: *{discountCode}*\n\nMention this code when placing your order for a special discount!\nHere's our menu to get you started 👇",
+  workHours: {
+    '0': { open: 11, close: 16, enabled: true },  // Sunday
+    '1': { open: 8,  close: 18, enabled: true },  // Monday
+    '2': { open: 8,  close: 18, enabled: true },  // Tuesday
+    '3': { open: 8,  close: 18, enabled: true },  // Wednesday
+    '4': { open: 8,  close: 18, enabled: true },  // Thursday
+    '5': { open: 8,  close: 18, enabled: true },  // Friday
+    '6': { open: 9,  close: 14, enabled: true },  // Saturday
+  },
+};
+
 async function loadMessages() {
-  let data = {};
-  try { data = await fetch('/api/messages').then(r => r.json()); } catch(e) {}
+  let raw = {};
+  try { raw = await fetch('/api/messages').then(r => r.json()); } catch(e) {}
+  // Merge: API data wins over defaults, so saved customisations are preserved
+  const data = Object.assign({}, MSG_DEFAULTS, raw, {
+    workHours: Object.assign({}, MSG_DEFAULTS.workHours, raw.workHours || {}),
+  });
   MSG_FIELDS.forEach(f => {
     const el = document.getElementById('msg_' + f);
     if (el) el.value = data[f] || '';
   });
-  renderWorkHours(data.workHours || {});
+  renderWorkHours(data.workHours);
 }
 
 function renderWorkHours(wh) {
