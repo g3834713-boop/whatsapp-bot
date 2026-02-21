@@ -30,6 +30,9 @@ const client = new Client({
         clientId: CLIENT_ID,
         dataPath: path.join(DATA_DIR, '.wwebjs_auth')
     }),
+    // Increase CDP protocol timeout — default 30s is too short on Railway cold starts
+    // where WhatsApp Web may navigate/redirect before script injection completes.
+    protocolTimeout: 120000,
     puppeteer: {
         headless: true,
         executablePath: CHROME_PATH,
@@ -40,7 +43,11 @@ const client = new Client({
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu'
+            '--disable-gpu',
+            // Prevent page isolation from destroying execution contexts mid-inject
+            '--disable-features=IsolateOrigins,site-per-process,VizDisplayCompositor',
+            '--disable-site-isolation-trials',
+            '--shm-size=256mb',
         ]
     }
 });
@@ -125,5 +132,30 @@ startDashboard(3000);
 setBotClient(client);
 setReleaseCallback(releaseContact); // Allow dashboard to release agent mode
 
-console.log('[BOT] Starting WhatsApp bot...');
-client.initialize();
+// ── Auto-retry initialize ─────────────────────────────────────────────────────
+// WhatsApp Web sometimes navigates mid-injection on the first cold start in a
+// container. Retry up to 5 times with a 5-second back-off before giving up.
+async function safeInitialize(attempts = 0) {
+    const MAX = 5;
+    try {
+        console.log(`[BOT] Starting WhatsApp bot... (attempt ${attempts + 1}/${MAX})`);
+        await client.initialize();
+    } catch (err) {
+        const isContextErr =
+            err.message && (
+                err.message.includes('Execution context was destroyed') ||
+                err.message.includes('Protocol error') ||
+                err.message.includes('Target closed')
+            );
+        if (isContextErr && attempts < MAX - 1) {
+            const wait = (attempts + 1) * 5000;
+            console.warn(`[BOT] Init failed (${err.message.split('\n')[0]}). Retrying in ${wait / 1000}s...`);
+            await new Promise(r => setTimeout(r, wait));
+            return safeInitialize(attempts + 1);
+        }
+        console.error('[BOT] Failed to initialize after retries:', err.message);
+        // Keep process alive so dashboard remains accessible
+    }
+}
+
+safeInitialize();
