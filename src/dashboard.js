@@ -10,6 +10,7 @@ const crypto   = require('crypto');
 const fs       = require('fs');
 const path     = require('path');
 const QRCode   = require('qrcode');
+const AdmZip = require('adm-zip');
 const { getOOOConfig, setOOO } = require('./ooo');
 const { getAllPromos, addPromo, updatePromo, deletePromo, getReengageConfig, setReengageConfig } = require('./campaigns');
 
@@ -317,6 +318,90 @@ function _normalizeAutoReply(raw) {
     return Object.assign({}, raw, { menuItems });
 }
 
+// ── Config validation ────────────────────────────────────────────────────────
+function validateConfig(type, body) {
+    if (type === 'autoreply') {
+        if (!body || typeof body !== 'object') return 'Body must be an object.';
+        if (!body.businessName || !String(body.businessName).trim())
+            return 'Business name must not be empty.';
+        if (!Array.isArray(body.menuItems)) return 'menuItems must be an array.';
+        const topKeys = [];
+        for (let i = 0; i < body.menuItems.length; i++) {
+            const item = body.menuItems[i];
+            if (!item.key || !String(item.key).trim())
+                return `Menu item #${i + 1}: key must not be empty.`;
+            if (!item.label || !String(item.label).trim())
+                return `Menu item #${i + 1} (key "${item.key}"): label must not be empty.`;
+            if (topKeys.includes(item.key))
+                return `Duplicate menu key "${item.key}" — each top-level key must be unique.`;
+            topKeys.push(item.key);
+            if (Array.isArray(item.subItems)) {
+                const subKeys = [];
+                for (let j = 0; j < item.subItems.length; j++) {
+                    const sub = item.subItems[j];
+                    if (!sub.key || !String(sub.key).trim())
+                        return `Menu item "${item.key}", sub-item #${j + 1}: key must not be empty.`;
+                    if (!sub.label || !String(sub.label).trim())
+                        return `Menu item "${item.key}", sub-item "${sub.key}": label must not be empty.`;
+                    if (subKeys.includes(sub.key))
+                        return `Menu item "${item.key}": duplicate sub-item key "${sub.key}".`;
+                    subKeys.push(sub.key);
+                }
+            }
+        }
+        return null; // valid
+    }
+
+    if (type === 'messages') {
+        const wh = body && body.workHours;
+        if (wh) {
+            const timeRe = /^([01]\d|2[0-3]):[0-5]\d$/;
+            if (wh.start && !timeRe.test(wh.start))
+                return `workHours.start "${wh.start}" is not a valid HH:MM time.`;
+            if (wh.end && !timeRe.test(wh.end))
+                return `workHours.end "${wh.end}" is not a valid HH:MM time.`;
+        }
+        return null; // valid
+    }
+
+    if (type === 'settings') {
+        if (!body || typeof body !== 'object') return 'Body must be an object.';
+        const t = Number(body.agentTimeoutHours);
+        if (isNaN(t) || t <= 0)
+            return 'agentTimeoutHours must be a positive number.';
+        if (!body.discountCodePrefix || !String(body.discountCodePrefix).trim())
+            return 'discountCodePrefix must not be empty.';
+        if (Array.isArray(body.keywords)) {
+            const seen = new Set();
+            for (let i = 0; i < body.keywords.length; i++) {
+                const kw = body.keywords[i];
+                if (!kw.word || !String(kw.word).trim())
+                    return `Keyword #${i + 1}: word must not be empty.`;
+                if (!kw.target || !String(kw.target).trim())
+                    return `Keyword "${kw.word}": target must not be empty.`;
+                const w = kw.word.trim().toLowerCase();
+                if (seen.has(w)) return `Duplicate keyword "${w}" — each keyword must be unique.`;
+                seen.add(w);
+            }
+        }
+        if (Array.isArray(body.legacyPaymentSubItems)) {
+            const seen = new Set();
+            for (let i = 0; i < body.legacyPaymentSubItems.length; i++) {
+                const s = body.legacyPaymentSubItems[i];
+                if (!s.key || !String(s.key).trim())
+                    return `Legacy sub-item #${i + 1}: key must not be empty.`;
+                if (!s.label || !String(s.label).trim())
+                    return `Legacy sub-item "${s.key}": label must not be empty.`;
+                if (seen.has(s.key)) return `Duplicate legacy sub-item key "${s.key}".`;
+                seen.add(s.key);
+            }
+        }
+        return null; // valid
+    }
+
+    return null; // unknown type — pass through
+}
+
 app.get('/api/autoreply', (req, res) => {
     try { res.json(_normalizeAutoReply(JSON.parse(fs.readFileSync(AUTOREPLY_PATH, 'utf8')))); }
     catch (_) { res.json({ enabled: true, businessName: 'My Business', menuItems: [] }); }
@@ -324,6 +409,8 @@ app.get('/api/autoreply', (req, res) => {
 
 app.post('/api/autoreply', (req, res) => {
     try {
+        const err = validateConfig('autoreply', req.body);
+        if (err) return res.json({ ok: false, error: err });
         fs.writeFileSync(AUTOREPLY_PATH, JSON.stringify(req.body, null, 2));
         res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
@@ -339,6 +426,8 @@ app.get('/api/messages', (req, res) => {
 
 app.post('/api/messages', (req, res) => {
     try {
+        const err = validateConfig('messages', req.body);
+        if (err) return res.json({ ok: false, error: err });
         fs.writeFileSync(MESSAGES_PATH, JSON.stringify(req.body, null, 2));
         res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
@@ -353,10 +442,84 @@ app.get('/api/settings', (req, res) => {
 
 app.post('/api/settings', (req, res) => {
     try {
+        const err = validateConfig('settings', req.body);
+        if (err) return res.json({ ok: false, error: err });
         fs.writeFileSync(SETTINGS_PATH, JSON.stringify(req.body, null, 2));
         res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
 });
+
+// ── API: backup & restore ─────────────────────────────────────────────────────
+const CONFIG_DIR = path.join(__dirname, '..', 'config');
+
+// Files included in backup (config JSONs + all images)
+const BACKUP_CONFIG_FILES = [
+    'autoreply.json', 'messages.json', 'settings.json', 'schedules.json', 'customers.json',
+];
+
+app.get('/api/backup', (req, res) => {
+    try {
+        const zip = new AdmZip();
+        // Add each config file if it exists
+        for (const fname of BACKUP_CONFIG_FILES) {
+            const fpath = path.join(CONFIG_DIR, fname);
+            if (fs.existsSync(fpath)) zip.addLocalFile(fpath, 'config');
+        }
+        // Add all images
+        if (fs.existsSync(IMAGES_DIR)) {
+            const imgs = fs.readdirSync(IMAGES_DIR).filter(f => /\.(png|jpe?g|webp)$/i.test(f));
+            for (const img of imgs) zip.addLocalFile(path.join(IMAGES_DIR, img), 'images');
+        }
+        const buf = zip.toBuffer();
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="wbot-backup-${timestamp}.zip"`);
+        res.send(buf);
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.post('/api/restore', (req, res) => {
+    try {
+        const { data } = req.body; // base64-encoded zip
+        if (!data) return res.status(400).json({ ok: false, error: 'No zip data provided.' });
+        const buf = Buffer.from(data, 'base64');
+        const zip = new AdmZip(buf);
+        const entries = zip.getEntries();
+        const allowed = new Set(BACKUP_CONFIG_FILES);
+        const restored = [];
+        const skipped  = [];
+        for (const entry of entries) {
+            if (entry.isDirectory) continue;
+            const entryName = entry.entryName; // e.g. "config/autoreply.json" or "images/pay.png"
+            const parts = entryName.split('/');
+            const folder = parts[0];
+            const fname  = parts[parts.length - 1];
+            if (!fname || /\.\.|[<>:"|?*]/.test(fname)) { skipped.push(entryName); continue; }
+            if (folder === 'config') {
+                if (!allowed.has(fname)) { skipped.push(entryName); continue; }
+                // Validate before writing
+                let parsed;
+                try { parsed = JSON.parse(entry.getData().toString('utf8')); }
+                catch (_) { return res.json({ ok: false, error: `${fname} contains invalid JSON.` }); }
+                const type = fname.replace('.json', '');
+                const err = validateConfig(type, parsed);
+                if (err) return res.json({ ok: false, error: `${fname}: ${err}` });
+                if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
+                fs.writeFileSync(path.join(CONFIG_DIR, fname), JSON.stringify(parsed, null, 2));
+                restored.push(entryName);
+            } else if (folder === 'images') {
+                if (!/^[a-zA-Z0-9_-]+\.(png|jpe?g|webp)$/i.test(fname)) { skipped.push(entryName); continue; }
+                if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true });
+                fs.writeFileSync(path.join(IMAGES_DIR, fname), entry.getData());
+                restored.push(entryName);
+            } else {
+                skipped.push(entryName);
+            }
+        }
+        res.json({ ok: true, restored, skipped });
+    } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 // ── API: payment images ───────────────────────────────────────────────────────
 const IMAGES_DIR = path.join(__dirname, '..', 'images');
 

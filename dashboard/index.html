@@ -145,6 +145,7 @@ textarea{resize:vertical;min-height:60px}
     <button class="nav-btn" onclick="nav('autoreply',this)"><span class="ic"></span>Auto-Reply</button>
     <button class="nav-btn" onclick="nav('messages',this)"><span class="ic">✏️</span>Messages &amp; Hours</button>
     <button class="nav-btn" onclick="nav('settings',this)"><span class="ic">⚙️</span>Bot Settings</button>
+    <button class="nav-btn" onclick="nav('backup',this)"><span class="ic">🗄️</span>Backup &amp; Restore</button>
     <button class="nav-btn" onclick="nav('campaigns',this)"><span class="ic">📣</span>Campaigns</button>
     <button class="nav-btn" id="navQueue" onclick="nav('queue',this)"><span class="ic">🔔</span>Agent Queue <span id="queueBadge" style="display:none;background:#ef4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:4px;font-weight:700">0</span></button>
   </nav>
@@ -376,6 +377,38 @@ textarea{resize:vertical;min-height:60px}
       <button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button>
     </div>
   </div>
+
+  <!-- BACKUP & RESTORE -->
+  <div class="page" id="page-backup">
+    <h2>Backup &amp; Restore</h2>
+    <p class="sub">Download a full snapshot of all config files and images, or restore from a previous backup.</p>
+
+    <div class="card">
+      <div class="card-title">⬇️ Download Backup</div>
+      <p class="sub" style="margin-top:6px;margin-bottom:18px">Creates a <code style="background:#1e2535;padding:2px 6px;border-radius:4px">.zip</code> containing <strong>autoreply.json, messages.json, settings.json, schedules.json, customers.json</strong> and all payment images. Your live config is not affected.</p>
+      <button class="btn btn-primary" onclick="downloadBackup()">⬇️ Download wbot-backup.zip</button>
+    </div>
+
+    <div class="card" style="margin-top:20px">
+      <div class="card-title">⬆️ Restore from Backup</div>
+      <p class="sub" style="margin-top:6px;margin-bottom:14px">Upload a <code style="background:#1e2535;padding:2px 6px;border-radius:4px">.zip</code> previously created by this dashboard. Each config file is validated before writing — if any file fails validation the entire restore is aborted. Runtime state files (<code style="background:#1e2535;padding:2px 6px;border-radius:4px">agentmode.json, ooo.json</code>) are never overwritten.</p>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <label class="btn btn-add" style="cursor:pointer">
+          📂 Choose backup .zip
+          <input type="file" accept=".zip" id="restoreInput" style="display:none" onchange="handleRestoreFile(this)">
+        </label>
+        <span id="restoreFilename" style="font-size:12px;color:#94a3b8">No file chosen</span>
+      </div>
+      <div id="restorePreview" style="display:none;margin-top:16px">
+        <div style="background:#1e2535;border-radius:8px;padding:14px;font-family:monospace;font-size:12px;color:#94a3b8;max-height:220px;overflow-y:auto;white-space:pre-wrap" id="restorePreviewText"></div>
+        <div style="margin-top:12px;display:flex;gap:10px">
+          <button class="btn btn-primary" onclick="confirmRestore()">✅ Restore Now</button>
+          <button class="btn" onclick="cancelRestore()" style="background:#1e2535;border:1px solid #334155">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="page" id="page-campaigns">
     <h2>Campaigns</h2>
     <p class="sub">Out of office mode, scheduled promo blasts &amp; re-engagement automation.</p>
@@ -554,6 +587,7 @@ function nav(page, btn) {
   if (page==='campaigns') loadCampaigns();
   if (page==='messages') loadMessages();
   if (page==='settings') loadSettings();
+  if (page==='backup')   resetRestoreUI();
 }
 
 //  Chats 
@@ -1220,6 +1254,91 @@ async function saveSettings() {
   }).then(r => r.json());
   toast(r.ok ? '✅ Settings saved!' : '❌ ' + r.error, r.ok ? 'ok' : 'err');
   if (r.ok) renderKeywords(stData.keywords); // re-render to clean blank rows
+}
+
+// ── Backup & Restore ──────────────────────────────────────────────────────────
+let _restoreZipBase64 = null;
+
+function downloadBackup() {
+  fetch('/api/backup')
+    .then(r => {
+      if (!r.ok) return r.json().then(j => Promise.reject(j.error || 'Backup failed'));
+      const cd    = r.headers.get('Content-Disposition') || '';
+      const match = cd.match(/filename="([^"]+)"/);
+      const fname = match ? match[1] : 'wbot-backup.zip';
+      return r.blob().then(blob => ({ blob, fname }));
+    })
+    .then(({ blob, fname }) => {
+      const url = URL.createObjectURL(blob);
+      const a   = document.createElement('a');
+      a.href = url; a.download = fname; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast('✅ Backup downloaded: ' + fname, 'ok');
+    })
+    .catch(err => toast('❌ ' + err, 'err'));
+}
+
+function handleRestoreFile(input) {
+  _restoreZipBase64 = null;
+  const file = input.files[0];
+  if (!file) return;
+  document.getElementById('restoreFilename').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const bytes  = new Uint8Array(e.target.result);
+    let binary   = '';
+    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+    _restoreZipBase64 = btoa(binary);
+    document.getElementById('restorePreviewText').textContent =
+      `File:  ${file.name}\nSize:  ${(file.size / 1024).toFixed(1)} KB\n\nClick "Restore Now" to validate and apply this backup.\nOnly config files and images will be written.\nRuntime state (agentmode.json, ooo.json) is never overwritten.`;
+    document.getElementById('restorePreview').style.display = 'block';
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+async function confirmRestore() {
+  if (!_restoreZipBase64) return;
+  const btn = document.querySelector('#restorePreview .btn-primary');
+  btn.disabled = true; btn.textContent = '⏳ Restoring…';
+  try {
+    const r = await fetch('/api/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: _restoreZipBase64 }),
+    }).then(r => r.json());
+    if (r.ok) {
+      const lines = ['✅ Restore complete!', ''];
+      if (r.restored && r.restored.length) {
+        lines.push('Restored:');
+        r.restored.forEach(f => lines.push('  ✓ ' + f));
+      }
+      if (r.skipped && r.skipped.length) {
+        lines.push('', 'Skipped (not in allowlist):');
+        r.skipped.forEach(f => lines.push('  – ' + f));
+      }
+      document.getElementById('restorePreviewText').textContent = lines.join('\n');
+      toast('✅ Restore applied! Bot will use the new config on the next message.', 'ok');
+    } else {
+      document.getElementById('restorePreviewText').textContent = '❌ Restore failed:\n' + r.error;
+      toast('❌ ' + r.error, 'err');
+    }
+  } catch (err) {
+    toast('❌ ' + err.message, 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ Restore Now';
+  }
+}
+
+function cancelRestore()  { resetRestoreUI(); }
+
+function resetRestoreUI() {
+  _restoreZipBase64 = null;
+  const inp = document.getElementById('restoreInput');
+  if (inp) inp.value = '';
+  const fn = document.getElementById('restoreFilename');
+  if (fn) fn.textContent = 'No file chosen';
+  const pv = document.getElementById('restorePreview');
+  if (pv) pv.style.display = 'none';
 }
 
 // ── Connect / Disconnect ─────────────────────────────────────────────────────
