@@ -79,12 +79,12 @@ const CATEGORIES = [
     },
     {
         name:        'Consumer Electronics',
-        url:         'https://www.made-in-china.com/products-search/hot-china-products/Consumer_Electronics.html',
+        url:         'https://www.made-in-china.com/Consumer-Electronics-Catalog/Consumer-Electronics.html',
         fallbackUrl: 'https://www.made-in-china.com/Consumer-Electronics-Catalog/Mobile-Phone.html',
     },
     {
         name:        'Electrical & Electronics',
-        url:         'https://www.made-in-china.com/products-search/hot-china-products/Electrical_Equipment.html',
+        url:         'https://www.made-in-china.com/products/catlist/listsubcat/123/00/mic/Electrical_Electronics.html',
         fallbackUrl: 'https://www.made-in-china.com/Electrical-Electronics-Catalog/Electric-Wire-Cable.html',
     },
     {
@@ -99,7 +99,7 @@ const CATEGORIES = [
     },
     {
         name:        'Industrial Equipment & Components',
-        url:         'https://www.made-in-china.com/products-search/hot-china-products/Industrial_Equipment.html',
+        url:         'https://www.made-in-china.com/Industrial-Equipment-Components-Catalog/Industrial-Equipment-Components.html',
         fallbackUrl: 'https://www.made-in-china.com/Industrial-Machinery-Catalog/Bearing.html',
     },
     {
@@ -119,7 +119,7 @@ const CATEGORIES = [
     },
     {
         name:        'Manufacturing & Processing Machinery',
-        url:         'https://www.made-in-china.com/products-search/hot-china-products/Industrial_Machinery.html',
+        url:         'https://www.made-in-china.com/products/catlist/listsubcat/132/00/mic/Machinery.html',
         fallbackUrl: 'https://www.made-in-china.com/Manufacturing-Processing-Machinery-Catalog/Plastic-Machine.html',
     },
     {
@@ -159,7 +159,7 @@ const CATEGORIES = [
     },
     {
         name:        'Transportation',
-        url:         'https://www.made-in-china.com/products-search/hot-china-products/Electric_Bike.html',
+        url:         'https://www.made-in-china.com/products/catlist/listsubcat/144/00/mic/Transportation.html',
         fallbackUrl: 'https://www.made-in-china.com/Transportation-Catalog/Electric-Bike.html',
     },
 ];
@@ -353,14 +353,23 @@ async function refreshProductCache(progressCb) {
         await sleep(delay);
     }
 
+    // Deduplicate across categories by normalised title
+    const seenTitles = new Set();
+    const deduped = newProducts.filter(p => {
+        const key = p.title.toLowerCase().replace(/\s+/g, ' ').trim();
+        if (seenTitles.has(key)) return false;
+        seenTitles.add(key);
+        return true;
+    });
+
     const cache = {
         lastUpdated:  new Date().toISOString(),
-        totalScraped: newProducts.length,
-        products:     newProducts.slice(0, 1000),
+        totalScraped: deduped.length,
+        products:     deduped.slice(0, 1000),
         source:       'made-in-china.com',
     };
     saveCache(cache);
-    console.log(`[SCRAPER] Refresh complete — ${cache.products.length} products cached.`);
+    console.log(`[SCRAPER] Refresh complete — ${cache.products.length} unique products cached (${newProducts.length - deduped.length} duplicates removed).`);
     return cache;
 }
 

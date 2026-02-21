@@ -26,7 +26,7 @@ const DEFAULTS = {
     startMinute:     0,
     postsPerDay:     12,
     intervalMinutes: 2,
-    namesPerPost:    6,
+    namesPerPost:    3,
     autoScrapeDaily: true,   // re-scrape Alibaba once a week (Sunday midnight)
 };
 
