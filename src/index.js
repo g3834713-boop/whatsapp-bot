@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
 
-// On Fly.io the persistent volume is mounted at /app/data
+// On Railway the persistent volume is mounted at /app/data
 // Locally it falls back to the project root
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });

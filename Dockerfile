@@ -1,5 +1,5 @@
 # ── Base image with Node 18 ──────────────────────────────────────────────────
-FROM node:18-slim
+FROM node:18-bookworm-slim
 
 # Install Chromium + dependencies for Puppeteer
 RUN apt-get update && apt-get install -y \
@@ -18,11 +18,12 @@ RUN apt-get update && apt-get install -y \
     libxfixes3 \
     libxkbcommon0 \
     libxrandr2 \
+    libxss1 \
     xdg-utils \
     --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
-# Tell Puppeteer to skip downloading Chrome (we use the system one)
+# Tell Puppeteer to skip downloading its own Chrome (we use the system one)
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV CHROMIUM_PATH=/usr/bin/chromium
 
@@ -35,10 +36,15 @@ RUN npm ci --omit=dev
 # Copy app source
 COPY . .
 
-# Persistent data lives in a mounted volume at /app/data
-# (session, config, images) — mapped in fly.toml
+# Rename bundled config → config.defaults so the entrypoint can copy it to
+# the Railway persistent volume on first run and symlink /app/config back.
+RUN mv /app/config /app/config.defaults \
+ && chmod +x /app/entrypoint.sh
+
+# Persistent data lives in a Railway volume mounted at /app/data
+# (WhatsApp session + runtime config)
 ENV DATA_DIR=/app/data
 
 EXPOSE 3000
 
-CMD ["node", "src/index.js"]
+ENTRYPOINT ["/app/entrypoint.sh"]
