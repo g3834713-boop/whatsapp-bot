@@ -1,5 +1,5 @@
-# ── Base image with Node 18 ──────────────────────────────────────────────────
-FROM node:18-bookworm-slim
+# ── Base image with Node 20 ──────────────────────────────────────────────────
+FROM node:20-bookworm-slim
 
 # Install Chromium + dependencies for Puppeteer
 RUN apt-get update && apt-get install -y \
