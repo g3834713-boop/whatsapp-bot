@@ -125,7 +125,12 @@ client.on('message_create', async (msg) => {
 client.on('disconnected', (reason) => {
     console.log('[BOT] Disconnected:', reason);
     emitDisconnected();
-    // Don't exit — dashboard stays alive so user can reconnect via the Connect button
+    // Auto-reconnect after 10s — destroy the old browser instance first
+    console.log('[BOT] Will attempt reconnect in 10s...');
+    setTimeout(async () => {
+        try { await client.destroy(); } catch (_) { /* already dead */ }
+        safeInitialize();
+    }, 10000);
 });
 
 startDashboard(3000);
@@ -133,29 +138,65 @@ setBotClient(client);
 setReleaseCallback(releaseContact); // Allow dashboard to release agent mode
 
 // ── Auto-retry initialize ─────────────────────────────────────────────────────
-// WhatsApp Web sometimes navigates mid-injection on the first cold start in a
-// container. Retry up to 5 times with a 5-second back-off before giving up.
+// WhatsApp Web sometimes navigates mid-injection on first cold start in a
+// container, or crashes mid-session. Retry up to 5 times with back-off.
+let _reconnecting = false;
+
 async function safeInitialize(attempts = 0) {
+    if (_reconnecting && attempts === 0) {
+        console.log('[BOT] Reconnect already in progress, skipping duplicate trigger.');
+        return;
+    }
+    _reconnecting = true;
     const MAX = 5;
     try {
         console.log(`[BOT] Starting WhatsApp bot... (attempt ${attempts + 1}/${MAX})`);
         await client.initialize();
+        _reconnecting = false;
     } catch (err) {
-        const isContextErr =
+        const isRetryable =
             err.message && (
                 err.message.includes('Execution context was destroyed') ||
                 err.message.includes('Protocol error') ||
-                err.message.includes('Target closed')
+                err.message.includes('Target closed') ||
+                err.message.includes('Session closed') ||
+                err.message.includes('Navigation')
             );
-        if (isContextErr && attempts < MAX - 1) {
+        if (isRetryable && attempts < MAX - 1) {
             const wait = (attempts + 1) * 5000;
             console.warn(`[BOT] Init failed (${err.message.split('\n')[0]}). Retrying in ${wait / 1000}s...`);
+            try { await client.destroy(); } catch (_) {}
             await new Promise(r => setTimeout(r, wait));
             return safeInitialize(attempts + 1);
         }
         console.error('[BOT] Failed to initialize after retries:', err.message);
+        _reconnecting = false;
         // Keep process alive so dashboard remains accessible
     }
 }
+
+// ── Catch stale Puppeteer errors that escape mid-session ──────────────────────
+// These show up as unhandledRejection when WhatsApp Web navigates while the
+// client is already running. Trigger a reconnect instead of going silent.
+process.on('unhandledRejection', (reason) => {
+    const msg = reason && (reason.message || String(reason));
+    const isPuppeteer =
+        msg && (
+            msg.includes('Execution context was destroyed') ||
+            msg.includes('Protocol error') ||
+            msg.includes('Target closed') ||
+            msg.includes('Session closed')
+        );
+    if (isPuppeteer) {
+        console.warn('[BOT] Puppeteer mid-session crash detected. Reconnecting in 10s...');
+        emitDisconnected();
+        setTimeout(async () => {
+            try { await client.destroy(); } catch (_) {}
+            safeInitialize();
+        }, 10000);
+    } else {
+        console.error('[BOT] Unhandled rejection:', msg);
+    }
+});
 
 safeInitialize();
