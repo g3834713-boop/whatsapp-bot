@@ -29,8 +29,6 @@ const client = new Client({
     puppeteer: {
         headless: true,
         executablePath: CHROME_PATH,
-        // Use /tmp for Chrome's profile dir so lock files never persist across restarts
-        userDataDir: '/tmp/chrome-profile',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -123,6 +121,16 @@ client.on('disconnected', (reason) => {
 startDashboard(3000);
 setBotClient(client);
 setReleaseCallback(releaseContact); // Allow dashboard to release agent mode
+
+// Delete stale Chromium lock files before starting
+// LocalAuth stores Chrome profile at: dataPath/session-{clientId}/
+const chromeProfDir = path.join(DATA_DIR, '.wwebjs_auth', 'session-whatsapp-bot');
+['SingletonLock', 'SingletonCookie', 'SingletonSocket'].forEach(f => {
+    try {
+        const p = path.join(chromeProfDir, f);
+        if (fs.existsSync(p)) { fs.unlinkSync(p); console.log('[BOT] Cleared lock:', f); }
+    } catch (_) {}
+});
 
 console.log('[BOT] Starting WhatsApp bot...');
 client.initialize();
