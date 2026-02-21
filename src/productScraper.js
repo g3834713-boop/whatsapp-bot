@@ -1,15 +1,16 @@
 /**
- * Product Scraper -- Alibaba category scraper (Puppeteer + stealth edition)
+ * Product Scraper -- made-in-china.com scraper (Puppeteer edition)
  *
- * Root cause of "0 products": Alibaba detects headless Chromium via the
- * `navigator.webdriver` flag and the AutomationControlled feature, then
- * serves an empty/CAPTCHA page instead of product cards.
+ * Why made-in-china.com instead of Alibaba:
+ *   - Server-side rendered HTML (actual product data in the page source)
+ *   - Does NOT block Railway/datacenter IPs (no CAPTCHA)
+ *   - No ScraperAPI needed → 100% free, unlimited runs
+ *   - Shows real factory FOB prices and MOQ directly
  *
- * Fix: patch the browser fingerprint via evaluateOnNewDocument before any
- * page load, plus pass --disable-blink-features=AutomationControlled.
+ * Puppeteer is used (rather than plain axios) so that lazy-loaded
+ * product images are resolved before we extract src attributes.
  *
  * A single browser instance is launched per full scrape run, then closed.
- * It does NOT interfere with the WhatsApp client browser.
  */
 
 const puppeteer = require('puppeteer');
@@ -20,8 +21,8 @@ const PRODUCTS_FILE = path.join(__dirname, '..', 'config', 'products.json');
 const DEBUG_DIR     = path.join(__dirname, '..', 'config', 'scraper-debug');
 
 const MAX_PER_CAT   = 6;
-const REQ_DELAY_MIN = 7000;
-const REQ_DELAY_MAX = 13000;
+const REQ_DELAY_MIN = 4000;
+const REQ_DELAY_MAX = 8000;
 
 const CHROME_PATH = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
 
@@ -33,73 +34,112 @@ const PUPPETEER_ARGS = [
     '--no-first-run',
     '--no-zygote',
     '--disable-gpu',
-    '--disable-features=IsolateOrigins,site-per-process',
     '--shm-size=256mb',
     '--window-size=1366,768',
-    // KEY: tells Chromium not to expose the Automation flag in the DOM
     '--disable-blink-features=AutomationControlled',
 ];
 
-// ---- Official Alibaba top-level categories -----------------------------------
+// ---- made-in-china.com top-level categories ----------------------------------
+// url: the direct product listing page for this category.
+// The pattern {Slug}-Catalog/{Slug}.html is MIC's own catalog URL structure.
+// A search fallback is also attempted if the catalog page returns no products.
 const CATEGORIES = [
-    { name: 'Apparel & Accessories',             slug: 'Apparel-Accessories'                },
-    { name: 'Consumer Electronics',              slug: 'Consumer-Electronics'               },
-    { name: 'Luggage, Bags & Cases',             slug: 'Luggage-Bags-Cases'                 },
-    { name: 'Parents, Kids & Toys',              slug: 'Toys-Games'                         },
-    { name: 'Commercial Equipment & Machinery',  slug: 'Commercial-Equipment-Machinery'     },
-    { name: 'Home & Garden',                     slug: 'Home-Garden'                        },
-    { name: 'Sports & Entertainment',            slug: 'Sports-Entertainment'               },
-    { name: 'Sportswear & Outdoor Apparel',      slug: 'Sportswear-Outdoor-Apparel'         },
-    { name: 'Beauty',                            slug: 'Beauty'                             },
-    { name: 'Jewelry, Eyewear & Watches',        slug: 'Jewelry-Eyewear-Watches'            },
-    { name: 'Shoes & Accessories',               slug: 'Shoes-Accessories'                  },
-    { name: 'Packaging & Printing',              slug: 'Packaging-Printing'                 },
-    { name: 'Personal Care & Home Care',         slug: 'Personal-Care-Home-Care'            },
-    { name: 'Health & Medical',                  slug: 'Health-Medical'                     },
-    { name: 'Gifts & Crafts',                    slug: 'Gifts-Crafts'                       },
-    { name: 'Pet Supplies',                      slug: 'Pet-Supplies'                       },
-    { name: 'School & Office Supplies',          slug: 'School-Office-Supplies'             },
-    { name: 'Industrial Machinery',              slug: 'Industrial-Machinery'               },
-    { name: 'Construction & Building Machinery', slug: 'Construction-Building-Machinery'    },
-    { name: 'Construction & Real Estate',        slug: 'Construction-Real-Estate'           },
-    { name: 'Furniture',                         slug: 'Furniture'                          },
-    { name: 'Lights & Lighting',                 slug: 'Lights-Lighting'                    },
-    { name: 'Home Appliances',                   slug: 'Home-Appliances'                    },
-    { name: 'Automotive Supplies & Tools',       slug: 'Automotive-Supplies-Tools'          },
-    { name: 'Vehicle Parts & Accessories',       slug: 'Vehicle-Parts-Accessories'          },
-    { name: 'Tools & Hardware',                  slug: 'Tools-Hardware'                     },
-    { name: 'Renewable Energy',                  slug: 'Renewable-Energy'                   },
-    { name: 'Electrical Equipment & Supplies',   slug: 'Electrical-Equipment-Supplies'      },
-    { name: 'Safety & Security',                 slug: 'Safety-Security'                    },
-    { name: 'Material Handling',                 slug: 'Material-Handling'                  },
-    { name: 'Testing Instrument & Equipment',    slug: 'Testing-Instruments-Equipment'      },
-    { name: 'Power Transmission',                slug: 'Power-Transmission'                 },
-    { name: 'Electronic Components',             slug: 'Electronic-Components-Supplies'     },
-    { name: 'Vehicles & Transportation',         slug: 'Vehicles-Transportation'            },
-    { name: 'Agriculture, Food & Beverage',      slug: 'Agriculture-Food-Beverage'          },
-    { name: 'Raw Materials',                     slug: 'Raw-Materials'                      },
-    { name: 'Fabrication Services',              slug: 'Manufacturing-Processing-Machinery' },
-];
-
-// Selectors covering Alibaba DOM 2022-2025.
-// SPM-derived attrs are tried first as they are part of Alibaba's own
-// analytics system and are very stable across redesigns.
-const CARD_SELECTORS = [
-    '[data-spm="normal_offer"]',
-    '[data-spm-anchor-id*="galleryofferlist"]',
-    '.search-card-e-offer',
-    '.search-card-e',
-    '[class*="search-card"]',
-    '.fy23-search-card',
-    '.organic-gallery-offer-outter',
-    '.J-offer-wrapper',
-    '.list-no-v2-outter',
-    '[class*="gallery-offer"]',
-    '[class*="normal-offer"]',
-    '[class*="SearchCard"]',
-    '[class*="offer-item"]',
-    '[class*="offerItem"]',
-    '.offer-list-items .item',
+    {
+        name: 'Apparel & Accessories',
+        url:  'https://www.made-in-china.com/Apparel-Accessories-Catalog/Apparel-Accessories.html',
+    },
+    {
+        name: 'Arts & Crafts',
+        url:  'https://www.made-in-china.com/Gifts-Crafts-Catalog/Arts-Crafts.html',
+    },
+    {
+        name: 'Auto, Motorcycle Parts & Accessories',
+        url:  'https://www.made-in-china.com/Auto-Parts-Accessories-Catalog/Auto-Parts.html',
+    },
+    {
+        name: 'Bags, Cases & Boxes',
+        url:  'https://www.made-in-china.com/Luggage-Bags-Cases-Catalog/Bags-Cases-Boxes.html',
+    },
+    {
+        name: 'Chemicals',
+        url:  'https://www.made-in-china.com/Chemicals-Catalog/Chemicals.html',
+    },
+    {
+        name: 'Computer Products',
+        url:  'https://www.made-in-china.com/Consumer-Electronics-Catalog/Computer-Products.html',
+    },
+    {
+        name: 'Construction & Decoration',
+        url:  'https://www.made-in-china.com/Construction-Real-Estate-Catalog/Construction-Decoration.html',
+    },
+    {
+        name: 'Consumer Electronics',
+        url:  'https://www.made-in-china.com/Consumer-Electronics-Catalog/Consumer-Electronics.html',
+    },
+    {
+        name: 'Electrical & Electronics',
+        url:  'https://www.made-in-china.com/Electrical-Equipment-Supplies-Catalog/Electrical-Electronics.html',
+    },
+    {
+        name: 'Furniture',
+        url:  'https://www.made-in-china.com/Furniture-Catalog/Furniture.html',
+    },
+    {
+        name: 'Health & Medicine',
+        url:  'https://www.made-in-china.com/Health-Medical-Catalog/Health-Medicine.html',
+    },
+    {
+        name: 'Industrial Equipment & Components',
+        url:  'https://www.made-in-china.com/Industrial-Machinery-Catalog/Industrial-Equipment.html',
+    },
+    {
+        name: 'Instruments & Meters',
+        url:  'https://www.made-in-china.com/Instruments-Meters-Catalog/Instruments-Meters.html',
+    },
+    {
+        name: 'Light Industry & Daily Use',
+        url:  'https://www.made-in-china.com/Light-Industry-Daily-Use-Catalog/Light-Industry-Daily-Use.html',
+    },
+    {
+        name: 'Lights & Lighting',
+        url:  'https://www.made-in-china.com/Lights-Lighting-Catalog/Lights-Lighting.html',
+    },
+    {
+        name: 'Manufacturing & Processing Machinery',
+        url:  'https://www.made-in-china.com/Manufacturing-Processing-Machinery-Catalog/Manufacturing-Processing-Machinery.html',
+    },
+    {
+        name: 'Metallurgy, Mineral & Energy',
+        url:  'https://www.made-in-china.com/Metallurgy-Mineral-Energy-Catalog/Metallurgy-Mineral-Energy.html',
+    },
+    {
+        name: 'Office Supplies',
+        url:  'https://www.made-in-china.com/Office-Supplies-Catalog/Office-Supplies.html',
+    },
+    {
+        name: 'Packaging & Printing',
+        url:  'https://www.made-in-china.com/Packaging-Printing-Catalog/Packaging-Printing.html',
+    },
+    {
+        name: 'Security & Protection',
+        url:  'https://www.made-in-china.com/Security-Protection-Catalog/Security-Protection.html',
+    },
+    {
+        name: 'Sporting Goods & Recreation',
+        url:  'https://www.made-in-china.com/Sporting-Goods-Recreation-Catalog/Sporting-Goods-Recreation.html',
+    },
+    {
+        name: 'Tools & Hardware',
+        url:  'https://www.made-in-china.com/Tools-Hardware-Catalog/Tools-Hardware.html',
+    },
+    {
+        name: 'Toys',
+        url:  'https://www.made-in-china.com/Toys-Games-Catalog/Toys.html',
+    },
+    {
+        name: 'Transportation',
+        url:  'https://www.made-in-china.com/Transportation-Catalog/Transportation.html',
+    },
 ];
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -120,80 +160,44 @@ function saveCache(data) {
 
 function getAllCachedProducts() { return loadCache().products || []; }
 
-// Save a HTML snippet for debugging when a page returns 0 products
 function saveDebugHtml(categoryName, html) {
     try {
         if (!fs.existsSync(DEBUG_DIR)) fs.mkdirSync(DEBUG_DIR, { recursive: true });
         const safe = categoryName.replace(/[^a-z0-9]/gi, '_');
-        const file = path.join(DEBUG_DIR, `${safe}.html`);
-        fs.writeFileSync(file, html.slice(0, 50000)); // save first 50 KB
-        console.log(`[SCRAPER] Debug HTML saved -> ${file}`);
+        fs.writeFileSync(path.join(DEBUG_DIR, `${safe}.html`), html.slice(0, 60000));
     } catch (_) {}
 }
 
-// ---- Stealth patches applied before every page load -------------------------
+// ---- Stealth patches --------------------------------------------------------
 async function applyStealthPatches(page) {
     await page.evaluateOnNewDocument(() => {
-        // Hide the webdriver flag
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-
-        // Fake a real Chrome runtime object
-        window.chrome = {
-            runtime: {
-                connect:          () => {},
-                sendMessage:      () => {},
-                onMessage:        { addListener: () => {} },
-                onConnect:        { addListener: () => {} },
-            },
-        };
-
-        // Fake plugin list (headless has 0 plugins)
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => [
-                { name: 'Chrome PDF Plugin'   },
-                { name: 'Chrome PDF Viewer'   },
-                { name: 'Native Client'       },
-            ],
-        });
-
-        // Non-empty language list
-        Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-US', 'en'],
-        });
-
-        // Permissions API -- headless returns different values
-        const originalQuery = window.navigator.permissions
-            ? window.navigator.permissions.query.bind(window.navigator.permissions)
-            : null;
-        if (originalQuery) {
-            window.navigator.permissions.query = (parameters) =>
-                parameters.name === 'notifications'
-                    ? Promise.resolve({ state: Notification.permission })
-                    : originalQuery(parameters);
-        }
+        window.chrome = { runtime: {} };
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
     });
 }
 
-// ---- Core scraper (Puppeteer + stealth) -------------------------------------
+// ---- Core scraper -----------------------------------------------------------
 /**
- * Scrape one Alibaba category using a Puppeteer page.
- * Uses the trade-search URL with the broad category name as the query.
- * Stealth patches hide headless detection before every page load.
+ * Scrape one made-in-china.com category page.
+ * MIC renders product titles, prices, and MOQ server-side, so they're in the
+ * initial HTML.  Images are lazy-loaded; Puppeteer resolves them automatically.
+ * No ScraperAPI proxy needed -- MIC does not block datacenter IPs.
+ *
+ * Fallback: if the catalog URL yields no cards, tries MIC's keyword search.
  *
  * @param {import('puppeteer').Browser} browser
- * @param {{ name: string, slug: string }} category
+ * @param {{ name: string, url: string }} category
  * @returns {Promise<object[]>}
  */
 async function scrapeCategory(browser, category) {
     const page = await browser.newPage();
     try {
-        // -- Stealth: apply before goto() --
         await applyStealthPatches(page);
-
-        // Randomise viewport to avoid constant fingerprint
         await page.setViewport({
-            width:  1366 + Math.floor(Math.random() * 100),
-            height: 768  + Math.floor(Math.random() * 80),
+            width:  1366 + Math.floor(Math.random() * 80),
+            height: 768  + Math.floor(Math.random() * 60),
         });
         await page.setUserAgent(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -201,125 +205,120 @@ async function scrapeCategory(browser, category) {
         );
         await page.setExtraHTTPHeaders({
             'Accept-Language': 'en-US,en;q=0.9',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'sec-ch-ua': '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-ch-ua-mobile': '?0',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         });
 
-        // Block fonts/media only -- allow images so the CDN calls look normal
+        // Block fonts/media only (allow images for lazy-load resolution)
         await page.setRequestInterception(true);
         page.on('request', req => {
             if (['media', 'font'].includes(req.resourceType())) req.abort();
             else req.continue();
         });
 
-        const directUrl =
-            `https://www.alibaba.com/trade/search` +
-            `?SearchText=${encodeURIComponent(category.name)}` +
-            `&IndexArea=product_en&viewtype=G&page=1`;
+        // MIC search fallback URL (keyword search, underscores for spaces)
+        const keyword     = category.name.replace(/[^a-z0-9]+/gi, '_');
+        const searchUrl   = `https://www.made-in-china.com/products-search/hot-china-products/${keyword}.html`;
 
-        // Railway runs on datacenter IPs which Alibaba hard-blocks.
-        // If SCRAPER_API_KEY is set, route through ScraperAPI residential proxies.
-        const scraperKey = process.env.SCRAPER_API_KEY;
-        const searchUrl = scraperKey
-            ? `http://api.scraperapi.com?api_key=${scraperKey}&url=${encodeURIComponent(directUrl)}&render=true&premium=true`
-            : directUrl;
+        // Selector for product cards: MIC renders each item in a list container.
+        // The most stable anchor is links pointing to *.en.made-in-china.com/product/
+        // We look for the parent container of any such link.
+        const PRODUCT_LINK_SEL = 'a[href*=".en.made-in-china.com/product/"]';
 
-        if (!scraperKey) {
-            console.warn('[SCRAPER] WARNING: SCRAPER_API_KEY not set. Alibaba will block Railway datacenter IPs.');
-            console.warn('[SCRAPER] Get a free key at https://www.scraperapi.com (1000 req/month free)');
-        }
-
-        // Use networkidle2 so JS-rendered cards fully hydrate before we query
-        await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-
-        // Extra buffer for lazy-rendered card batches
-        await sleep(3000);
-
-        const selectorStr = CARD_SELECTORS.join(', ');
         let found = false;
 
+        // -- Try primary catalog URL --
         try {
-            await page.waitForSelector(selectorStr, { timeout: 15000 });
+            await page.goto(category.url, { waitUntil: 'networkidle2', timeout: 40000 });
+            await sleep(2000);
+            await page.waitForSelector(PRODUCT_LINK_SEL, { timeout: 12000 });
             found = true;
         } catch (_) {
-            const html  = await page.content();
-            const title = await page.title();
-            // Print diagnostic info directly to console (visible in Railway logs)
-            const bodyText = await page.evaluate(() =>
-                (document.body ? document.body.innerText : '').slice(0, 800)
-            );
-            console.warn(`[SCRAPER] No product cards for "${category.name}"`);
-            console.warn(`[SCRAPER] Page title: "${title}"`);
-            console.warn(`[SCRAPER] Body snippet:\n${bodyText}\n---`);
-            saveDebugHtml(category.name, html);
+            console.warn(`[SCRAPER] Catalog page empty for "${category.name}", trying search URL...`);
+        }
+
+        // -- Fallback to keyword search --
+        if (!found) {
+            try {
+                await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: 40000 });
+                await sleep(2000);
+                await page.waitForSelector(PRODUCT_LINK_SEL, { timeout: 12000 });
+                found = true;
+            } catch (_) {
+                const html      = await page.content();
+                const title     = await page.title();
+                const bodySnip  = await page.evaluate(() =>
+                    (document.body ? document.body.innerText : '').slice(0, 600)
+                );
+                console.warn(`[SCRAPER] No products for "${category.name}"`);
+                console.warn(`[SCRAPER] Page title: "${title}"`);
+                console.warn(`[SCRAPER] Body snippet:\n${bodySnip}\n---`);
+                saveDebugHtml(category.name, html);
+            }
         }
 
         if (!found) return [];
 
-        const products = await page.evaluate((max, categoryName, selectors) => {
-            const results = [];
+        // ---- Extract products from the live DOM --------------------------------
+        const products = await page.evaluate((max, categoryName, linkSel) => {
+            const results   = [];
+            const linkEls   = Array.from(document.querySelectorAll(linkSel));
+            // Deduplicate: only one link per product card (first link in card)
+            const seen      = new Set();
+            const uniqueLinks = linkEls.filter(a => {
+                const href = a.getAttribute('href') || '';
+                if (seen.has(href)) return false;
+                seen.add(href);
+                return true;
+            });
 
-            let cards = [];
-            for (const sel of selectors) {
-                cards = Array.from(document.querySelectorAll(sel));
-                if (cards.length > 0) break;
-            }
+            for (let i = 0; i < uniqueLinks.length && results.length < max; i++) {
+                const anchor   = uniqueLinks[i];
+                const href     = anchor.getAttribute('href') || '';
+                const linkUrl  = href.startsWith('http') ? href : 'https:' + href;
 
-            for (let i = 0; i < Math.min(cards.length, max); i++) {
-                const el = cards[i];
+                // Title: text of the anchor itself, or the closest heading
+                let title = (anchor.textContent || '').replace(/\s+/g, ' ').trim();
+                if (!title || title.length < 5) {
+                    const heading = anchor.closest('h2,h3,h4');
+                    if (heading) title = (heading.textContent || '').replace(/\s+/g, ' ').trim();
+                }
+                if (!title || title.length < 5) continue;
 
-                // Title
-                const titleEl =
-                    el.querySelector('.search-card-e-title')    ||
-                    el.querySelector('[class*="title"]')         ||
-                    el.querySelector('h2')                       ||
-                    el.querySelector('h3')                       ||
-                    el.querySelector('h4');
-                const title = (titleEl ? titleEl.textContent : '').replace(/\s+/g, ' ').trim();
-                if (!title || title.length < 4) continue;
+                // Walk up the DOM to find the card container (stop at 8 levels)
+                let card = anchor;
+                for (let depth = 0; depth < 8; depth++) {
+                    if (!card.parentElement) break;
+                    card = card.parentElement;
+                    const text = card.innerText || '';
+                    // Stop once we find a container that has BOTH a price and an MOQ
+                    if (/US\$[\d,.]+/.test(text) && /MOQ|Pieces?\s*\(/.test(text)) break;
+                }
 
-                // Price
-                const priceEl =
-                    el.querySelector('.search-card-e-price-main') ||
-                    el.querySelector('[class*="price"]');
-                const price = priceEl
-                    ? priceEl.textContent.replace(/\s+/g, ' ').trim()
-                    : 'Contact supplier';
+                const cardText = card.innerText || '';
 
-                // MOQ
-                const moqEl =
-                    el.querySelector('.search-card-e-min-order') ||
-                    el.querySelector('[class*="min-order"]')      ||
-                    el.querySelector('[class*="moq"]')            ||
-                    el.querySelector('[class*="minorder"]');
-                const moq = moqEl
-                    ? moqEl.textContent.replace(/\s+/g, ' ').trim()
-                    : 'MOQ negotiable';
+                // Price: e.g. "US$68.00-101.00 / Piece" or "US$68.00 / Piece"
+                const priceMatch = cardText.match(/US\$[\d,.]+(?:\s*[-–]\s*[\d,.]+)?\s*\/\s*\w+/);
+                const price      = priceMatch ? priceMatch[0].trim() : 'Contact supplier';
 
-                // Image -- prefer higher-res src variants
+                // MOQ: e.g. "10 Pieces  (MOQ)" or "1 Set (MOQ)"
+                const moqMatch = cardText.match(/(\d[\d,]*\s+\w+)\s+\(MOQ\)/i);
+                const moq      = moqMatch ? moqMatch[0].trim() : 'MOQ negotiable';
+
+                // Image: prefer data-src (lazy) then src; skip space.png placeholders
                 let imageUrl = '';
-                const img = el.querySelector('img');
-                if (img) {
-                    const raw =
-                        img.getAttribute('data-src')      ||
-                        img.getAttribute('data-lazy-src') ||
-                        img.getAttribute('src')           || '';
-                    if (raw && !raw.startsWith('data:') && raw.length > 30) {
+                const imgs   = Array.from(card.querySelectorAll('img'));
+                for (const img of imgs) {
+                    const raw = img.getAttribute('data-src') ||
+                                img.getAttribute('data-lazy-src') ||
+                                img.getAttribute('src') || '';
+                    if (raw && !raw.includes('space.png') && !raw.startsWith('data:') && raw.length > 20) {
                         imageUrl = raw.startsWith('//') ? 'https:' + raw : raw;
+                        break;
                     }
                 }
 
-                // Link
-                const anchor  = el.querySelector('a[href]');
-                const href    = anchor ? anchor.getAttribute('href') : '';
-                const linkUrl = href
-                    ? (href.startsWith('http') ? href : 'https://www.alibaba.com' + href)
-                    : '';
-
                 results.push({
-                    id:         `ab-${Date.now().toString(36)}-${i}`,
+                    id:         `mic-${Date.now().toString(36)}-${i}`,
                     title:      title.slice(0, 130),
                     price:      price.slice(0, 80),
                     minOrder:   moq.slice(0, 60),
@@ -327,10 +326,11 @@ async function scrapeCategory(browser, category) {
                     category:   categoryName,
                     productUrl: linkUrl,
                     scrapedAt:  new Date().toISOString(),
+                    source:     'made-in-china.com',
                 });
             }
             return results;
-        }, MAX_PER_CAT, category.name, CARD_SELECTORS);
+        }, MAX_PER_CAT, category.name, PRODUCT_LINK_SEL);
 
         console.log(`[SCRAPER] "${category.name}" -> ${products.length} product(s)`);
         return products;
@@ -344,7 +344,7 @@ async function scrapeCategory(browser, category) {
 
 // ---- Public: full cache refresh ---------------------------------------------
 async function refreshProductCache(progressCb) {
-    console.log('[SCRAPER] Launching browser for product cache refresh...');
+    console.log('[SCRAPER] Launching browser for made-in-china.com product cache refresh...');
     let browser;
     try {
         browser = await puppeteer.launch({
@@ -378,6 +378,7 @@ async function refreshProductCache(progressCb) {
         lastUpdated:  new Date().toISOString(),
         totalScraped: newProducts.length,
         products:     combined,
+        source:       'made-in-china.com',
     };
     saveCache(cache);
     console.log(`[SCRAPER] Refresh complete -- ${combined.length} products cached.`);
