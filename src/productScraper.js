@@ -1,10 +1,15 @@
 /**
- * Product Scraper â€” Alibaba search scraper (Puppeteer edition)
+ * Product Scraper -- Alibaba category scraper (Puppeteer edition)
  *
- * Alibaba search pages are fully JS-rendered â€” axios+cheerio only gets
- * the bare HTML shell with no product data. This rewrite uses Puppeteer
- * (already installed via whatsapp-web.js) to render each page and extract
+ * Alibaba pages are fully JS-rendered -- axios+cheerio only gets the bare
+ * HTML shell with no product data.  This module uses Puppeteer (already
+ * installed via whatsapp-web.js) to render each category page and extract
  * products from the live DOM.
+ *
+ * Categories are Alibaba's official top-level categories, NOT niche
+ * keyword searches.  Each entry has a browse-page slug; if the browse
+ * page yields no cards the scraper falls back to a trade-search URL
+ * using the category name as the query.
  *
  * A single browser instance is launched per full scrape run, then closed.
  * It does NOT interfere with the WhatsApp client browser.
@@ -16,9 +21,9 @@ const path      = require('path');
 
 const PRODUCTS_FILE = path.join(__dirname, '..', 'config', 'products.json');
 
-const MAX_PER_KW    = 6;
-const REQ_DELAY_MIN = 5000;
-const REQ_DELAY_MAX = 9000;
+const MAX_PER_CAT   = 6;
+const REQ_DELAY_MIN = 6000;
+const REQ_DELAY_MAX = 11000;
 
 const CHROME_PATH = process.env.CHROMIUM_PATH || '/usr/bin/chromium';
 
@@ -32,58 +37,73 @@ const PUPPETEER_ARGS = [
     '--disable-gpu',
     '--disable-features=IsolateOrigins,site-per-process',
     '--shm-size=256mb',
+    '--window-size=1280,800',
 ];
 
-const CATEGORY_KEYWORDS = [
-    'ankara fabric wholesale',
-    'african print fabric bulk',
-    'ladies fashion tops wholesale',
-    'men casual shirts bulk',
-    'fashion jewelry wholesale',
-    'ladies wristwatch bulk order',
-    'sunglasses wholesale',
-    'human hair wigs wholesale',
-    'skin cream beauty products wholesale',
-    'cosmetics makeup wholesale',
-    'smartphone accessories wholesale',
-    'wireless earbuds bulk order',
-    'power bank wholesale',
-    'kitchen utensils wholesale',
-    'household cleaning products bulk',
-    'bedding sets wholesale',
-    'ladies handbags wholesale',
-    'backpack bags bulk order',
-    'sports equipment wholesale',
-    'fitness accessories bulk',
-    'ladies shoes wholesale',
-    'sneakers bulk order',
-    'lace fabric wholesale',
-    'printed cotton fabric bulk',
-    'gift items wholesale',
-    'souvenir crafts bulk',
-    'small home appliances wholesale',
-    'electric fan bulk order',
-    'children toys wholesale',
-    'baby products bulk order',
-    'hair care products wholesale',
-    'beauty tools bulk order',
-    'food packaging wholesale',
-    'furniture accessories wholesale',
-    'hand tools wholesale',
-    'stationery wholesale',
-    'school bags bulk order',
-    'led lights wholesale',
-    'electrical accessories bulk',
-    'face masks wholesale',
-    'medical gloves bulk',
-    'pet accessories wholesale',
-    'cctv cameras wholesale',
-    'car accessories wholesale',
+// ---- Official Alibaba top-level categories -----------------------------------
+// slug is the path segment used in both browse and search URLs.
+const CATEGORIES = [
+    { name: 'Apparel & Accessories',             slug: 'Apparel-Accessories'                },
+    { name: 'Consumer Electronics',              slug: 'Consumer-Electronics'               },
+    { name: 'Luggage, Bags & Cases',             slug: 'Luggage-Bags-Cases'                 },
+    { name: 'Parents, Kids & Toys',              slug: 'Toys-Games'                         },
+    { name: 'Commercial Equipment & Machinery',  slug: 'Commercial-Equipment-Machinery'     },
+    { name: 'Home & Garden',                     slug: 'Home-Garden'                        },
+    { name: 'Sports & Entertainment',            slug: 'Sports-Entertainment'               },
+    { name: 'Sportswear & Outdoor Apparel',      slug: 'Sportswear-Outdoor-Apparel'         },
+    { name: 'Beauty',                            slug: 'Beauty'                             },
+    { name: 'Jewelry, Eyewear & Watches',        slug: 'Jewelry-Eyewear-Watches'            },
+    { name: 'Shoes & Accessories',               slug: 'Shoes-Accessories'                  },
+    { name: 'Packaging & Printing',              slug: 'Packaging-Printing'                 },
+    { name: 'Personal Care & Home Care',         slug: 'Personal-Care-Home-Care'            },
+    { name: 'Health & Medical',                  slug: 'Health-Medical'                     },
+    { name: 'Gifts & Crafts',                    slug: 'Gifts-Crafts'                       },
+    { name: 'Pet Supplies',                      slug: 'Pet-Supplies'                       },
+    { name: 'School & Office Supplies',          slug: 'School-Office-Supplies'             },
+    { name: 'Industrial Machinery',              slug: 'Industrial-Machinery'               },
+    { name: 'Construction & Building Machinery', slug: 'Construction-Building-Machinery'    },
+    { name: 'Construction & Real Estate',        slug: 'Construction-Real-Estate'           },
+    { name: 'Furniture',                         slug: 'Furniture'                          },
+    { name: 'Lights & Lighting',                 slug: 'Lights-Lighting'                    },
+    { name: 'Home Appliances',                   slug: 'Home-Appliances'                    },
+    { name: 'Automotive Supplies & Tools',       slug: 'Automotive-Supplies-Tools'          },
+    { name: 'Vehicle Parts & Accessories',       slug: 'Vehicle-Parts-Accessories'          },
+    { name: 'Tools & Hardware',                  slug: 'Tools-Hardware'                     },
+    { name: 'Renewable Energy',                  slug: 'Renewable-Energy'                   },
+    { name: 'Electrical Equipment & Supplies',   slug: 'Electrical-Equipment-Supplies'      },
+    { name: 'Safety & Security',                 slug: 'Safety-Security'                    },
+    { name: 'Material Handling',                 slug: 'Material-Handling'                  },
+    { name: 'Testing Instrument & Equipment',    slug: 'Testing-Instruments-Equipment'      },
+    { name: 'Power Transmission',                slug: 'Power-Transmission'                 },
+    { name: 'Electronic Components',             slug: 'Electronic-Components-Supplies'     },
+    { name: 'Vehicles & Transportation',         slug: 'Vehicles-Transportation'            },
+    { name: 'Agriculture, Food & Beverage',      slug: 'Agriculture-Food-Beverage'          },
+    { name: 'Raw Materials',                     slug: 'Raw-Materials'                      },
+    { name: 'Fabrication Services',              slug: 'Manufacturing-Processing-Machinery' },
+];
+
+// Comprehensive selector list covering Alibaba DOM from 2022 through 2025
+const CARD_SELECTORS = [
+    // Current Alibaba (2024-2025 redesign)
+    '.search-card-e-offer',
+    '.search-card-e',
+    '[class*="search-card"]',
+    // FY23 search cards
+    '.fy23-search-card',
+    // Organic gallery (2022-2023)
+    '.organic-gallery-offer-outter',
+    '.J-offer-wrapper',
+    '.list-no-v2-outter',
+    // Generic attribute fallbacks
+    '[class*="SearchCard"]',
+    '[class*="offer-item"]',
+    '[class*="offerItem"]',
+    '.offer-list-items .item',
 ];
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// â”€â”€ Cache helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ---- Cache helpers -----------------------------------------------------------
 function loadCache() {
     try { return JSON.parse(fs.readFileSync(PRODUCTS_FILE, 'utf8')); }
     catch (_) { return { lastUpdated: null, totalScraped: 0, products: [] }; }
@@ -99,65 +119,76 @@ function saveCache(data) {
 
 function getAllCachedProducts() { return loadCache().products || []; }
 
-// â”€â”€ Core scraper (Puppeteer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ---- Core scraper (Puppeteer) ------------------------------------------------
 /**
- * Scrape one Alibaba search keyword using a Puppeteer page.
+ * Scrape one Alibaba category using a Puppeteer page.
+ * 1. Tries the official category browse page (e.g. /Apparel-Accessories_p1.html)
+ * 2. Falls back to trade-search with the category name as the query.
+ *
  * @param {import('puppeteer').Browser} browser
- * @param {string} keyword
+ * @param {{ name: string, slug: string }} category
+ * @returns {Promise<object[]>}
  */
-async function scrapeKeyword(browser, keyword) {
+async function scrapeCategory(browser, category) {
     const page = await browser.newPage();
     try {
+        // Randomise viewport to reduce bot fingerprint
+        await page.setViewport({
+            width:  1280 + Math.floor(Math.random() * 120),
+            height: 800  + Math.floor(Math.random() * 100),
+        });
         await page.setUserAgent(
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-            '(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+            '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         );
-        await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
+        await page.setExtraHTTPHeaders({
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        });
 
-        // Block images/fonts/media to speed up loading â€” we grab image URLs from DOM attrs
+        // Block images/fonts/media -- we pull image URLs from DOM attributes
         await page.setRequestInterception(true);
         page.on('request', req => {
-            const type = req.resourceType();
-            if (['image', 'media', 'font'].includes(type)) req.abort();
+            if (['image', 'media', 'font'].includes(req.resourceType())) req.abort();
             else req.continue();
         });
 
-        const url = `https://www.alibaba.com/trade/search?SearchText=${encodeURIComponent(keyword)}&IndexArea=product_en&viewtype=G&page=1`;
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        // Primary: category browse page
+        const browseUrl = `https://www.alibaba.com/${category.slug}_p1.html`;
+        // Fallback: trade-search with category name
+        const searchUrl = `https://www.alibaba.com/trade/search?SearchText=${encodeURIComponent(category.name)}&IndexArea=product_en&viewtype=G&page=1`;
 
-        // Wait for any of the known product card containers
-        const CARD_SELECTORS = [
-            '.organic-gallery-offer-outter',
-            '.J-offer-wrapper',
-            '.list-no-v2-outter',
-            '.offer-list-items .item',
-            '.fy23-search-card',
-            '[class*="SearchCard"]',
-            '[class*="offer-item"]',
-        ];
         const selectorStr = CARD_SELECTORS.join(', ');
+        let found = false;
+
+        // -- Try browse URL first --
         try {
-            await page.waitForSelector(selectorStr, { timeout: 10000 });
+            await page.goto(browseUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+            await page.waitForSelector(selectorStr, { timeout: 12000 });
+            found = true;
         } catch (_) {
-            // No product cards appeared â€” likely CAPTCHA or empty results
-            console.warn(`[SCRAPER] No product cards after wait for "${keyword}"`);
+            console.warn(`[SCRAPER] Browse page empty for "${category.name}", trying search URL...`);
         }
 
-        // Extract products from the rendered DOM
-        const products = await page.evaluate((max, keyword) => {
+        // -- Fallback to search URL --
+        if (!found) {
+            try {
+                await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 35000 });
+                await page.waitForSelector(selectorStr, { timeout: 12000 });
+                found = true;
+            } catch (_) {
+                console.warn(`[SCRAPER] No product cards for "${category.name}" (both URLs tried)`);
+            }
+        }
+
+        if (!found) return [];
+
+        // Extract products from the live DOM
+        const products = await page.evaluate((max, categoryName, selectors) => {
             const results = [];
-            const cardSelectors = [
-                '.organic-gallery-offer-outter',
-                '.J-offer-wrapper',
-                '.list-no-v2-outter',
-                '.offer-list-items .item',
-                '[class*="SearchCard"]',
-                '[class*="offer-item"]',
-                '.fy23-search-card',
-            ];
 
             let cards = [];
-            for (const sel of cardSelectors) {
+            for (const sel of selectors) {
                 cards = Array.from(document.querySelectorAll(sel));
                 if (cards.length > 0) break;
             }
@@ -165,26 +196,42 @@ async function scrapeKeyword(browser, keyword) {
             for (let i = 0; i < Math.min(cards.length, max); i++) {
                 const el = cards[i];
 
-                // Title â€” try various class patterns
+                // Title
                 const titleEl =
-                    el.querySelector('[class*="title"]') ||
-                    el.querySelector('h2') || el.querySelector('h3') || el.querySelector('h4');
+                    el.querySelector('.search-card-e-title')    ||
+                    el.querySelector('[class*="title"]')         ||
+                    el.querySelector('h2')                       ||
+                    el.querySelector('h3')                       ||
+                    el.querySelector('h4');
                 const title = (titleEl ? titleEl.textContent : '').replace(/\s+/g, ' ').trim();
-                if (!title || title.length < 5) continue;
+                if (!title || title.length < 4) continue;
 
                 // Price
-                const priceEl = el.querySelector('[class*="price"]');
-                const price   = priceEl ? priceEl.textContent.replace(/\s+/g, ' ').trim() : 'Contact supplier';
+                const priceEl =
+                    el.querySelector('.search-card-e-price-main') ||
+                    el.querySelector('[class*="price"]');
+                const price = priceEl
+                    ? priceEl.textContent.replace(/\s+/g, ' ').trim()
+                    : 'Contact supplier';
 
                 // MOQ
-                const moqEl = el.querySelector('[class*="min-order"], [class*="moq"], [class*="minorder"]');
-                const moq   = moqEl ? moqEl.textContent.replace(/\s+/g, ' ').trim() : 'MOQ negotiable';
+                const moqEl =
+                    el.querySelector('.search-card-e-min-order') ||
+                    el.querySelector('[class*="min-order"]')      ||
+                    el.querySelector('[class*="moq"]')            ||
+                    el.querySelector('[class*="minorder"]');
+                const moq = moqEl
+                    ? moqEl.textContent.replace(/\s+/g, ' ').trim()
+                    : 'MOQ negotiable';
 
-                // Image â€” grab data-src / src; skip base64/placeholder
+                // Image
                 let imageUrl = '';
                 const img = el.querySelector('img');
                 if (img) {
-                    const raw = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('src') || '';
+                    const raw =
+                        img.getAttribute('data-src')      ||
+                        img.getAttribute('data-lazy-src') ||
+                        img.getAttribute('src')           || '';
                     if (raw && !raw.startsWith('data:') && raw.length > 30) {
                         imageUrl = raw.startsWith('//') ? 'https:' + raw : raw;
                     }
@@ -203,27 +250,27 @@ async function scrapeKeyword(browser, keyword) {
                     price:      price.slice(0, 80),
                     minOrder:   moq.slice(0, 60),
                     imageUrl,
-                    category:   keyword,
+                    category:   categoryName,
                     productUrl: linkUrl,
                     scrapedAt:  new Date().toISOString(),
                 });
             }
             return results;
-        }, MAX_PER_KW, keyword);
+        }, MAX_PER_CAT, category.name, CARD_SELECTORS);
 
-        console.log(`[SCRAPER] "${keyword}" â†’ ${products.length} product(s)`);
+        console.log(`[SCRAPER] "${category.name}" -> ${products.length} product(s)`);
         return products;
     } catch (e) {
-        console.warn(`[SCRAPER] Error for "${keyword}": ${e.message}`);
+        console.warn(`[SCRAPER] Error for "${category.name}": ${e.message}`);
         return [];
     } finally {
         await page.close();
     }
 }
 
-// â”€â”€ Public: full cache refresh â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ---- Public: full cache refresh ---------------------------------------------
 async function refreshProductCache(progressCb) {
-    console.log('[SCRAPER] Launching browser for product cache refreshâ€¦');
+    console.log('[SCRAPER] Launching browser for product cache refresh...');
     let browser;
     try {
         browser = await puppeteer.launch({
@@ -240,11 +287,11 @@ async function refreshProductCache(progressCb) {
     let done = 0;
 
     try {
-        for (const keyword of CATEGORY_KEYWORDS) {
-            const batch = await scrapeKeyword(browser, keyword);
+        for (const category of CATEGORIES) {
+            const batch = await scrapeCategory(browser, category);
             newProducts.push(...batch);
             done++;
-            if (progressCb) progressCb(done, CATEGORY_KEYWORDS.length, keyword, batch.length);
+            if (progressCb) progressCb(done, CATEGORIES.length, category.name, batch.length);
             const delay = REQ_DELAY_MIN + Math.random() * (REQ_DELAY_MAX - REQ_DELAY_MIN);
             await sleep(delay);
         }
@@ -259,7 +306,7 @@ async function refreshProductCache(progressCb) {
         products:     combined,
     };
     saveCache(cache);
-    console.log(`[SCRAPER] Refresh complete â€” ${combined.length} products cached.`);
+    console.log(`[SCRAPER] Refresh complete -- ${combined.length} products cached.`);
     return cache;
 }
 
