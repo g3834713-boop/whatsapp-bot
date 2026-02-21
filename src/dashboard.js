@@ -310,6 +310,21 @@ app.post('/api/autoreply', (req, res) => {
     } catch (e) { res.json({ ok: false, error: e.message }); }
 });
 
+// ── API: messages config ──────────────────────────────────────────────────────
+const MESSAGES_PATH = path.join(__dirname, '..', 'config', 'messages.json');
+
+app.get('/api/messages', (req, res) => {
+    try { res.json(JSON.parse(fs.readFileSync(MESSAGES_PATH, 'utf8'))); }
+    catch (_) { res.json({}); }
+});
+
+app.post('/api/messages', (req, res) => {
+    try {
+        fs.writeFileSync(MESSAGES_PATH, JSON.stringify(req.body, null, 2));
+        res.json({ ok: true });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // ── API: payment images ───────────────────────────────────────────────────────
 const IMAGES_DIR = path.join(__dirname, '..', 'images');
 

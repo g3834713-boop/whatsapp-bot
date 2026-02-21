@@ -129,6 +129,7 @@ textarea{resize:vertical;min-height:60px}
     <button class="nav-btn" onclick="nav('chats',this)"><span class="ic"></span>Groups & Channels</button>
     <button class="nav-btn" onclick="nav('schedules',this)"><span class="ic"></span>Schedules</button>
     <button class="nav-btn" onclick="nav('autoreply',this)"><span class="ic"></span>Auto-Reply</button>
+    <button class="nav-btn" onclick="nav('messages',this)"><span class="ic">✏️</span>Messages &amp; Hours</button>
     <button class="nav-btn" onclick="nav('campaigns',this)"><span class="ic">📣</span>Campaigns</button>
     <button class="nav-btn" id="navQueue" onclick="nav('queue',this)"><span class="ic">🔔</span>Agent Queue <span id="queueBadge" style="display:none;background:#ef4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:4px;font-weight:700">0</span></button>
   </nav>
@@ -236,6 +237,76 @@ textarea{resize:vertical;min-height:60px}
     <h2>Agent Queue</h2>
     <p class="sub">Clients waiting to speak with a human agent. Click <b>Release</b> to hand them back to the bot.</p>
     <div id="queueContainer"><div class="spinner"></div></div>
+  </div>
+
+  <!-- MESSAGES & HOURS -->
+  <div class="page" id="page-messages">
+    <h2>Messages &amp; Hours</h2>
+    <p class="sub">Edit all bot message templates and configure working hours.</p>
+
+    <!-- Message templates -->
+    <div class="card">
+      <div class="card-title">💬 Message Templates</div>
+      <p class="sub" style="margin-top:6px;margin-bottom:16px">Use <code>{placeholder}</code> tokens where shown. They are replaced at send time.</p>
+
+      <div style="margin-bottom:20px">
+        <label class="form-label">Closed / Out-of-Hours message</label>
+        <p class="sub">Tokens: <code>{nextDay}</code> <code>{nextOpen}</code></p>
+        <textarea id="msg_closed" class="form-control" rows="6" style="font-family:monospace;font-size:12px"></textarea>
+      </div>
+
+      <div style="margin-bottom:20px">
+        <label class="form-label">Menu greeting</label>
+        <p class="sub">Token: <code>{businessName}</code></p>
+        <textarea id="msg_menuGreeting" class="form-control" rows="3" style="font-family:monospace;font-size:12px"></textarea>
+      </div>
+
+      <div style="margin-bottom:20px">
+        <label class="form-label">Menu footer</label>
+        <textarea id="msg_menuFooter" class="form-control" rows="3" style="font-family:monospace;font-size:12px"></textarea>
+      </div>
+
+      <div style="margin-bottom:20px">
+        <label class="form-label">Exit / Thank-you message</label>
+        <textarea id="msg_exit" class="form-control" rows="4" style="font-family:monospace;font-size:12px"></textarea>
+      </div>
+
+      <div style="margin-bottom:20px">
+        <label class="form-label">Nudge message (unrecognised input)</label>
+        <textarea id="msg_nudge" class="form-control" rows="4" style="font-family:monospace;font-size:12px"></textarea>
+      </div>
+
+      <div style="margin-bottom:20px">
+        <label class="form-label">Agent-request notification (sent to owner)</label>
+        <p class="sub">Tokens: <code>{name}</code> <code>{number}</code> <code>{time}</code></p>
+        <textarea id="msg_agentNotify" class="form-control" rows="6" style="font-family:monospace;font-size:12px"></textarea>
+      </div>
+
+      <div style="margin-bottom:20px">
+        <label class="form-label">Welcome message (new customers)</label>
+        <p class="sub">Tokens: <code>{businessName}</code> <code>{name}</code> <code>{discountCode}</code></p>
+        <textarea id="msg_welcome" class="form-control" rows="7" style="font-family:monospace;font-size:12px"></textarea>
+      </div>
+    </div>
+
+    <!-- Working hours -->
+    <div class="card" style="margin-top:20px">
+      <div class="card-title">⏰ Working Hours</div>
+      <p class="sub" style="margin-top:6px;margin-bottom:16px">Set opening &amp; closing times for each day. Disabled days are treated as closed.</p>
+      <table style="width:100%;border-collapse:collapse" id="workHoursTable">
+        <thead><tr style="color:#94a3b8;font-size:12px;text-align:left">
+          <th style="padding:6px 10px">Day</th>
+          <th style="padding:6px 10px">Enabled</th>
+          <th style="padding:6px 10px">Opens</th>
+          <th style="padding:6px 10px">Closes</th>
+        </tr></thead>
+        <tbody id="workHoursTbody"></tbody>
+      </table>
+    </div>
+
+    <div class="flex-end" style="margin-top:16px">
+      <button class="btn btn-primary" onclick="saveMessages()">💾 Save Messages &amp; Hours</button>
+    </div>
   </div>
 
   <!-- CAMPAIGNS -->
@@ -414,6 +485,7 @@ function nav(page, btn) {
   if (page==='autoreply') loadAutoReply();
   if (page==='queue') loadQueue();
   if (page==='campaigns') loadCampaigns();
+  if (page==='messages') loadMessages();
 }
 
 //  Chats 
@@ -653,6 +725,79 @@ async function saveAutoReply() {
   arData.enabled = document.getElementById('arEnabled').checked;
   const r = await fetch('/api/autoreply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(arData)}).then(r=>r.json());
   toast(r.ok?' Auto-Reply saved!':' '+r.error, r.ok?'ok':'err');
+}
+
+// ── Messages & Hours ─────────────────────────────────────────────────────────
+const MSG_FIELDS = ['closed','menuGreeting','menuFooter','exit','nudge','agentNotify','welcome'];
+const WH_DAYS    = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+async function loadMessages() {
+  let data = {};
+  try { data = await fetch('/api/messages').then(r => r.json()); } catch(e) {}
+  MSG_FIELDS.forEach(f => {
+    const el = document.getElementById('msg_' + f);
+    if (el) el.value = data[f] || '';
+  });
+  renderWorkHours(data.workHours || {});
+}
+
+function renderWorkHours(wh) {
+  const tbody = document.getElementById('workHoursTbody');
+  if (!tbody) return;
+  const defaultSlot = { open: 8, close: 18, enabled: true };
+  tbody.innerHTML = WH_DAYS.map((day, i) => {
+    const slot = wh[String(i)] || Object.assign({}, defaultSlot);
+    return `<tr style="border-top:1px solid #1e2d3d">
+      <td style="padding:8px 10px;font-weight:600;color:#e2e8f0;width:110px">${day}</td>
+      <td style="padding:8px 10px">
+        <label class="tog" style="margin:0">
+          <input type="checkbox" id="wh_en_${i}" ${slot.enabled !== false ? 'checked' : ''} onchange="whToggle(${i})">
+          <span class="tog-slider"></span>
+        </label>
+      </td>
+      <td style="padding:8px 10px">
+        <input type="number" id="wh_open_${i}" min="0" max="23" value="${slot.open || 8}"
+          style="width:60px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:4px 8px">
+        <span style="color:#94a3b8;font-size:12px;margin-left:4px">${'  '}:00</span>
+      </td>
+      <td style="padding:8px 10px">
+        <input type="number" id="wh_close_${i}" min="0" max="23" value="${slot.close || 18}"
+          style="width:60px;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:4px 8px">
+        <span style="color:#94a3b8;font-size:12px;margin-left:4px">:00</span>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function whToggle(i) {
+  const en    = document.getElementById('wh_en_'+i);
+  const open  = document.getElementById('wh_open_'+i);
+  const close = document.getElementById('wh_close_'+i);
+  if (open)  open.disabled  = !en.checked;
+  if (close) close.disabled = !en.checked;
+}
+
+async function saveMessages() {
+  const payload = {};
+  MSG_FIELDS.forEach(f => {
+    const el = document.getElementById('msg_' + f);
+    if (el) payload[f] = el.value;
+  });
+  const workHours = {};
+  for (let i = 0; i < 7; i++) {
+    workHours[String(i)] = {
+      enabled: document.getElementById('wh_en_'+i)?.checked ?? true,
+      open:    parseInt(document.getElementById('wh_open_'+i)?.value  || '8',  10),
+      close:   parseInt(document.getElementById('wh_close_'+i)?.value || '18', 10),
+    };
+  }
+  payload.workHours = workHours;
+  const r = await fetch('/api/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(r => r.json());
+  toast(r.ok ? '✅ Messages & Hours saved!' : '❌ ' + r.error, r.ok ? 'ok' : 'err');
 }
 
 // ── Connect / Disconnect ─────────────────────────────────────────────────────

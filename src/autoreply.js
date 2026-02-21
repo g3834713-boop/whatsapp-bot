@@ -11,8 +11,43 @@ const { addToQueue, removeFromQueue } = require('./dashboard');
 const { isOOO, getOOOMessage } = require('./ooo');
 
 const CONFIG_PATH     = path.join(__dirname, '..', 'config', 'autoreply.json');
+const MESSAGES_PATH   = path.join(__dirname, '..', 'config', 'messages.json');
 const AGENT_MODE_FILE = path.join(__dirname, '..', 'config', 'agentmode.json');
 const OPTION_KEYS     = ['1', '2', '3', '4', '5', '6', '0'];
+
+// ── Messages config ───────────────────────────────────────────────────────────
+const MSG_DEFAULTS = {
+    closed:      '🕐 *We\'re currently closed*\n\n📋 *Our working hours:*\n• Mon – Fri: 8am – 6pm\n• Saturday: 9am – 2pm\n• Sunday: 11am – 4pm\n\n✅ Your message has been received! We\'ll get back to you during any of the hours listed above.\nNext available: *{nextDay}* at *{nextOpen}*\n\n_Type *0* to reach an agent or *00* for menu_',
+    menuGreeting:'🏪 Hello! Welcome to *{businessName}*\n\n🙋 *How can we help you today?*',
+    menuFooter:  '👆 *Reply with a number* to choose an option\n_Type *00* anytime to see this menu again_',
+    exit:        '🙏 *Thank you for your service!*\n\nEnter *0* to connect with an agent\nEnter *00* to go back to menu',
+    nudge:       '*Not sure what to look for?*\n\nTalk with an agent directly:\nEnter *0* to connect with an agent\nEnter *00* for the menu.',
+    agentNotify: '🔔 *New Agent Request*\n\n👤 Client: *{name}*\n📞 Number: +{number}\n🕐 Time: {time}\n\n_The bot is now silent for this conversation._',
+    welcome:     '🎉 *Welcome to {businessName}!*\n\nHi {name}! We\'re so glad you reached out. 😊\n\n🎁 *Your exclusive first-time gift:*\nDiscount Code: *{discountCode}*\n\nMention this code when placing your order for a special discount!\nHere\'s our menu to get you started 👇',
+    workHours: {
+        '0': { open: 11, close: 16, enabled: true },
+        '1': { open: 8,  close: 18, enabled: true },
+        '2': { open: 8,  close: 18, enabled: true },
+        '3': { open: 8,  close: 18, enabled: true },
+        '4': { open: 8,  close: 18, enabled: true },
+        '5': { open: 8,  close: 18, enabled: true },
+        '6': { open: 9,  close: 14, enabled: true },
+    },
+};
+
+function loadMessages() {
+    try {
+        const m = JSON.parse(fs.readFileSync(MESSAGES_PATH, 'utf8'));
+        return Object.assign({}, MSG_DEFAULTS, m, {
+            workHours: Object.assign({}, MSG_DEFAULTS.workHours, m.workHours || {}),
+        });
+    } catch (e) { return MSG_DEFAULTS; }
+}
+
+/** Replace {placeholder} tokens in a template string */
+function fill(template, vars) {
+    return template.replace(/\{(\w+)\}/g, (_, k) => vars[k] !== undefined ? vars[k] : '{' + k + '}');
+}
 
 // Tracks which contacts have already been shown the menu this session
 const menuShown = new Set();
@@ -50,16 +85,7 @@ function loadAgentMode() {
 loadAgentMode(); // run once at startup
 
 // ── Working hours ─────────────────────────────────────────────────────────────
-// Mon=1 Tue=2 Wed=3 Thu=4 Fri=5 Sat=6 Sun=0  (getDay() values)
-const WORK_HOURS = {
-    1: { open: 8,  close: 18 }, // Mon
-    2: { open: 8,  close: 18 }, // Tue
-    3: { open: 8,  close: 18 }, // Wed
-    4: { open: 8,  close: 18 }, // Thu
-    5: { open: 8,  close: 18 }, // Fri
-    6: { open: 9,  close: 14 }, // Sat
-    0: { open: 11, close: 16 }, // Sun — 11am–4pm
-};
+// Loaded dynamically from config/messages.json so they can be edited in dashboard.
 
 // ── Timezone-aware time helpers ───────────────────────────────────────────────
 // Railway servers run UTC. Set BOT_TIMEZONE (e.g. "Africa/Johannesburg") so
@@ -81,8 +107,9 @@ function _localParts() {
 
 function isOpenNow() {
     const { day, hour } = _localParts();
-    const slot = WORK_HOURS[day];
-    if (!slot) return false;
+    const wh   = loadMessages().workHours;
+    const slot = wh[String(day)];
+    if (!slot || slot.enabled === false) return false;
     return hour >= slot.open && hour < slot.close;
 }
 
@@ -93,26 +120,20 @@ function fmtHour(h) {
 }
 
 function closedMessage() {
+    const msgs    = loadMessages();
+    const wh      = msgs.workHours;
     const { day } = _localParts();
-    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-    // Find next open day
+    const days    = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    let nextDay = '', nextOpen = '';
     for (let i = 1; i <= 7; i++) {
-        const next = WORK_HOURS[(day + i) % 7];
-        if (next) {
-            const nextDay = days[(day + i) % 7];
-            return (
-                `🕐 *We're currently closed*\n\n` +
-                `📋 *Our working hours:*\n` +
-                `• Mon – Fri: 8am – 6pm\n` +
-                `• Saturday: 9am – 2pm\n` +
-                `• Sunday: 11am – 4pm\n\n` +
-                `✅ Your message has been received! We'll get back to you during any of the hours listed above.\n` +
-                `Next available: *${nextDay}* at *${fmtHour(next.open)}*\n\n` +
-                `_Type *0* to reach an agent or *00* for menu_`
-            );
+        const slot = wh[String((day + i) % 7)];
+        if (slot && slot.enabled !== false) {
+            nextDay  = days[(day + i) % 7];
+            nextOpen = fmtHour(slot.open);
+            break;
         }
     }
-    return `🕐 *We're currently closed.* We'll respond next business day.`;
+    return fill(msgs.closed, { nextDay, nextOpen });
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -194,39 +215,27 @@ function matchLabel(input, labelMap) {
 }
 
 function buildMenuText(cfg) {
-    const name    = cfg.businessName || 'My Business';
-    const r       = cfg.responses || {};
-    const divider = '';
-    const emoji   = { '1':'1️⃣', '2':'2️⃣', '3':'3️⃣', '4':'4️⃣', '5':'5️⃣', '6':'6️⃣', '0':'0️⃣' };
-    const lines = OPTION_KEYS.filter(k => r[k]).map(k => {
+    const msgs   = loadMessages();
+    const name   = cfg.businessName || 'My Business';
+    const r      = cfg.responses || {};
+    const emoji  = { '1':'1️⃣', '2':'2️⃣', '3':'3️⃣', '4':'4️⃣', '5':'5️⃣', '6':'6️⃣', '0':'0️⃣' };
+    const lines  = OPTION_KEYS.filter(k => r[k]).map(k => {
         const label = r[k].split('\n')[0].replace(/\*/g, '').trim();
         return `${emoji[k]} ${label.slice(0, 60)}`;
     });
-    return [
-        `🏪 Hello! Welcome to *${name}*`,
-        divider,
-        '🙋 *How can we help you today?*',
-        '',
-        ...lines,
-        '',
-        divider,
-        '👆 *Reply with a number* to choose an option',
-        '_Type *00* anytime to see this menu again_'
-    ].join('\n');
+    const greeting = fill(msgs.menuGreeting, { businessName: name });
+    const footer   = msgs.menuFooter;
+    return [greeting, '', ...lines, '', footer].join('\n');
 }
 
 /** Send a one-time welcome message with discount code to a brand-new customer */
 async function sendWelcome(client, from, newCust, cfg) {
     if (!newCust || newCust.welcomeSent) return;
-    const name    = newCust.name ? `*${newCust.name}*` : 'there';
+    const msgs    = loadMessages();
     const bizName = cfg.businessName || 'our store';
+    const name    = newCust.name ? `*${newCust.name}*` : 'there';
     trackBotMessage(await client.sendMessage(from,
-        `🎉 *Welcome to ${bizName}!*\n\n` +
-        `Hi ${name}! We're so glad you reached out. 😊\n\n` +
-        `🎁 *Your exclusive first-time gift:*\n` +
-        `Discount Code: *${newCust.discountCode}*\n\n` +
-        `Mention this code when placing your order for a special discount!\n` +
-        `Here's our menu to get you started 👇`
+        fill(msgs.welcome, { businessName: bizName, name, discountCode: newCust.discountCode })
     ));
     markWelcomeSent(from);
 }
@@ -346,11 +355,7 @@ async function handleAutoReply(client, msg) {
         if (key === 'exit') {
             paymentSubMenu.delete(from);
             menuShown.delete(from);
-            trackBotMessage(await client.sendMessage(from,
-                '🙏 *Thank you for your service!*\n\n' +
-                'Enter *0* to connect with an agent\n' +
-                'Enter *00* to go back to menu'
-            ));
+            trackBotMessage(await client.sendMessage(from, loadMessages().exit));
             console.log('[AUTO-REPLY] Exit sent to ' + from);
             return true;
         }
@@ -377,12 +382,11 @@ async function handleAutoReply(client, msg) {
                     // use .user + @c.us to get the proper sendable JID.
                     const ownerJid = (client.info.wid.user || '') + '@c.us';
                     const disp     = contactName || from.split('@')[0];
-                    const notif    =
-                        `🔔 *New Agent Request*\n\n` +
-                        `👤 Client: *${disp}*\n` +
-                        `📞 Number: +${from.split('@')[0]}\n` +
-                        `🕐 Time: ${new Date().toLocaleString()}\n\n` +
-                        `_The bot is now silent for this conversation._`;
+                    const notif    = fill(loadMessages().agentNotify, {
+                        name:   disp,
+                        number: from.split('@')[0],
+                        time:   new Date().toLocaleString(),
+                    });
                     // Temporarily mark ownerJid as "bot is replying" so the
                     // message_create race doesn't put the owner into agent mode.
                     botReplying.add(ownerJid);
@@ -410,12 +414,7 @@ async function handleAutoReply(client, msg) {
             menuShown.add(from);
             console.log('[AUTO-REPLY] Menu sent to ' + from);
         } else {
-            trackBotMessage(await client.sendMessage(from,
-                '*Not sure what to look for?*\n\n' +
-                'Talk with an agent directly:\n' +
-                'Enter *0* to connect with an agent\n' +
-                'Enter *00* for the menu.'
-            ));
+            trackBotMessage(await client.sendMessage(from, loadMessages().nudge));
             console.log('[AUTO-REPLY] Nudge sent to ' + from);
         }
         return true;
