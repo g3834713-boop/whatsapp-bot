@@ -27,7 +27,7 @@ const DEFAULTS = {
     postsPerDay:     12,
     intervalMinutes: 2,
     namesPerPost:    6,
-    autoScrapeDaily: true,   // re-scrape Alibaba at midnight each day
+    autoScrapeDaily: true,   // re-scrape Alibaba once a week (Sunday midnight)
 };
 
 // ── Ghanaian names pool ───────────────────────────────────────────────────────
@@ -201,8 +201,8 @@ function startProductFeedScheduler(client, emitFn) {
         if (now.getHours() === Number(cfg.startHour) && now.getMinutes() === Number(cfg.startMinute)) {
             runDailyFeed(client, emitFn).catch(e => console.error('[FEED] Error:', e.message));
 
-            // Also auto-scrape daily at midnight if enabled
-            if (cfg.autoScrapeDaily && now.getHours() === 0 && now.getMinutes() === 0) {
+            // Auto-scrape weekly: runs once a week on Sunday at midnight
+            if (cfg.autoScrapeDaily && now.getDay() === 0 && now.getHours() === 0 && now.getMinutes() === 0) {
                 const { refreshProductCache } = require('./productScraper');
                 refreshProductCache().catch(e => console.error('[SCRAPER] Auto-refresh error:', e.message));
             }
