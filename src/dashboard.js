@@ -6,6 +6,7 @@
 const express  = require('express');
 const http     = require('http');
 const { Server } = require('socket.io');
+const crypto   = require('crypto');
 const fs       = require('fs');
 const path     = require('path');
 const QRCode   = require('qrcode');
@@ -16,8 +17,51 @@ const app    = express();
 const server = http.createServer(app);
 const io     = new Server(server);
 
+// ── Auth helpers ──────────────────────────────────────────────────────────────
+// If DASHBOARD_PASSWORD env var is set, all /api routes (except /api/auth and
+// /api/login) require a Bearer token.  Socket connections require the same token
+// via handshake.auth.token.  Without the env var the dashboard stays fully open
+// (local dev, no password set).
+function _makeToken(pwd) {
+    return crypto.createHash('sha256').update('wbot:' + pwd).digest('hex');
+}
+
+function _authMiddleware(req, res, next) {
+    const pwd = process.env.DASHBOARD_PASSWORD;
+    if (!pwd) return next();
+    if (req.path === '/auth' || req.path === '/login') return next();
+    const auth  = req.headers['authorization'] || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (token === _makeToken(pwd)) return next();
+    res.status(401).json({ error: 'Unauthorized' });
+}
+
+io.use((socket, next) => {
+    const pwd = process.env.DASHBOARD_PASSWORD;
+    if (!pwd) return next();
+    const token = socket.handshake.auth.token || socket.handshake.query.token || '';
+    if (token === _makeToken(pwd)) return next();
+    next(new Error('Unauthorized'));
+});
+
 app.use(express.json());
+app.use('/api', _authMiddleware);
 app.use(express.static(path.join(__dirname, '..', 'dashboard')));
+
+// ── Public: auth probe + login ────────────────────────────────────────────────
+app.get('/api/auth', (req, res) => {
+    res.json({ required: !!process.env.DASHBOARD_PASSWORD });
+});
+
+app.post('/api/login', (req, res) => {
+    const pwd = process.env.DASHBOARD_PASSWORD;
+    if (!pwd) return res.json({ ok: true, token: '' });
+    if (req.body.password === pwd) {
+        res.json({ ok: true, token: _makeToken(pwd) });
+    } else {
+        res.status(401).json({ ok: false, error: 'Wrong password' });
+    }
+});
 
 // ── State ────────────────────────────────────────────────────────────────────
 let botClient  = null;

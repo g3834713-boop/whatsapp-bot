@@ -323,18 +323,45 @@ textarea{resize:vertical;min-height:60px}
   </div>
 </div>
 
+<!-- ── Login overlay ─────────────────────────────────────────────────────── -->
+<div id="loginOverlay" style="display:none;position:fixed;inset:0;background:#0f1117;z-index:9999;align-items:center;justify-content:center">
+  <div style="background:#161b27;border:1px solid #1e2535;border-radius:16px;padding:40px 36px;width:340px;text-align:center">
+    <div style="font-size:40px;margin-bottom:12px">🔒</div>
+    <h2 style="color:#25d366;font-size:18px;margin-bottom:6px">Dashboard Login</h2>
+    <p style="color:#4b5563;font-size:13px;margin-bottom:24px">Enter your dashboard password to continue</p>
+    <input id="loginPwd" type="password" placeholder="Password"
+      style="width:100%;padding:10px 14px;background:#0f1117;border:1px solid #1e2535;border-radius:8px;color:#e2e8f0;font-size:14px;outline:none;margin-bottom:12px">
+    <button onclick="doLogin()"
+      style="width:100%;padding:10px;background:#25d366;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Sign In</button>
+    <div id="loginErr" style="color:#ef4444;font-size:13px;margin-top:10px;min-height:18px"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
-const socket = io();
+// ── Auth token (persisted in localStorage) ───────────────────────────────────
+let _tok = localStorage.getItem('dash_token') || '';
+
+// Monkey-patch fetch to inject Authorization header on every /api/ request
+(function(){
+  const _orig = window.fetch.bind(window);
+  window.fetch = function(url, opts) {
+    opts = opts || {};
+    if (_tok && typeof url === 'string' && url.startsWith('/api/')) {
+      const h = new Headers(opts.headers || {});
+      if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + _tok);
+      opts = Object.assign({}, opts, { headers: h });
+    }
+    return _orig(url, opts);
+  };
+})();
+
+let socket; // initialised in initDashboard()
 let status = 'disconnected';
 let schedulesData = [];
 let arData = {};
 let chatsData = { groups: [], channels: [] };
-
-//  Socket 
-socket.on('status', s => { status = s; setStatus(s); renderQR(s); if (s === 'connected') loadChats(); });
-socket.on('qr', url => renderQR('qr', url));
 
 function setStatus(s) {
   const p = document.getElementById('statusPill');
@@ -721,12 +748,6 @@ async function saveReengage() {
 // ── Agent Queue ───────────────────────────────────────────────────────────────
 let queueData = [];
 
-socket.on('agent-queue', items => {
-  queueData = items;
-  renderQueue();
-  updateQueueBadge();
-});
-
 function updateQueueBadge() {
   const badge = document.getElementById('queueBadge');
   if (queueData.length === 0) {
@@ -785,12 +806,62 @@ setInterval(() => {
   }
 }, 30000);
 
-// Init
-fetch('/api/status').then(r=>r.json()).then(d=>{
-  setStatus(d.status);
-  if (d.qr) renderQR('qr',d.qr); else renderQR(d.status);
-  status=d.status;
-});
+// ── initDashboard: connect socket + load initial state ──────────────────────
+function initDashboard() {
+  socket = io({ auth: { token: _tok } });
+  socket.on('status', s => { status = s; setStatus(s); renderQR(s); if (s === 'connected') loadChats(); });
+  socket.on('qr', url => renderQR('qr', url));
+  socket.on('agent-queue', items => { queueData = items; renderQueue(); updateQueueBadge(); });
+  socket.on('connect_error', e => {
+    if (e.message === 'Unauthorized') {
+      localStorage.removeItem('dash_token'); _tok = '';
+      location.reload();
+    }
+  });
+  fetch('/api/status').then(r=>r.json()).then(d=>{
+    setStatus(d.status);
+    if (d.qr) renderQR('qr',d.qr); else renderQR(d.status);
+    status=d.status;
+  });
+}
+
+// ── Login handler ──────────────────────────────────────────────────────────
+async function doLogin() {
+  const pwd = document.getElementById('loginPwd').value;
+  const err = document.getElementById('loginErr');
+  err.textContent = '';
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd })
+    });
+    const d = await r.json();
+    if (d.ok) {
+      _tok = d.token;
+      localStorage.setItem('dash_token', _tok);
+      document.getElementById('loginOverlay').style.display = 'none';
+      initDashboard();
+    } else {
+      err.textContent = d.error || 'Wrong password';
+    }
+  } catch(e) { err.textContent = 'Login failed: ' + e.message; }
+}
+document.getElementById('loginPwd').addEventListener('keydown', e => { if (e.key==='Enter') doLogin(); });
+
+// ── Startup: check if auth is required ───────────────────────────────────────
+(async () => {
+  const { required } = await fetch('/api/auth').then(r=>r.json()).catch(()=>({required:false}));
+  if (!required) { initDashboard(); return; }
+  if (_tok) {
+    const probe = await fetch('/api/status');
+    if (probe.status !== 401) { initDashboard(); return; }
+    localStorage.removeItem('dash_token'); _tok = '';
+  }
+  const ov = document.getElementById('loginOverlay');
+  ov.style.display = 'flex';
+  setTimeout(() => document.getElementById('loginPwd').focus(), 50);
+})();
 </script>
 </body>
 </html>
