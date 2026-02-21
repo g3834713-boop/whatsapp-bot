@@ -39,106 +39,135 @@ const PUPPETEER_ARGS = [
     '--disable-blink-features=AutomationControlled',
 ];
 
-// ---- made-in-china.com top-level categories ----------------------------------
-// url: the direct product listing page for this category.
-// The pattern {Slug}-Catalog/{Slug}.html is MIC's own catalog URL structure.
-// A search fallback is also attempted if the catalog page returns no products.
+// ---- made-in-china.com categories -------------------------------------------
+// url:         MIC "hot china products" search — confirmed to return product listings
+//              with *.en.made-in-china.com/product/ links, price, and MOQ.
+// fallbackUrl: a known leaf-subcategory catalog page used if the search URL fails.
+//
+// WHY search URLs as primary:
+//   Top-level category pages (e.g. /Electrical-Electronics-Catalog/Electrical-Electronics.html)
+//   are NAVIGATION/INDEX pages only — they list subcategories, not products.
+//   Only leaf subcategory catalog pages or the products-search endpoint list actual products.
 const CATEGORIES = [
     {
-        name: 'Apparel & Accessories',
-        url:  'https://www.made-in-china.com/Apparel-Accessories-Catalog/Apparel-Accessories.html',
+        name:        'Apparel & Accessories',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Apparel.html',
+        fallbackUrl: 'https://www.made-in-china.com/Apparel-Accessories-Catalog/T-Shirt.html',
     },
     {
-        name: 'Arts & Crafts',
-        url:  'https://www.made-in-china.com/Gifts-Crafts-Catalog/Arts-Crafts.html',
+        name:        'Arts & Crafts',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Arts_Crafts.html',
+        fallbackUrl: 'https://www.made-in-china.com/Gifts-Crafts-Catalog/Handicraft.html',
     },
     {
-        name: 'Auto, Motorcycle Parts & Accessories',
-        url:  'https://www.made-in-china.com/Auto-Parts-Accessories-Catalog/Auto-Parts.html',
+        name:        'Auto, Motorcycle Parts & Accessories',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Auto_Parts.html',
+        fallbackUrl: 'https://www.made-in-china.com/Auto-Parts-Accessories-Catalog/Auto-Parts.html',
     },
     {
-        name: 'Bags, Cases & Boxes',
-        url:  'https://www.made-in-china.com/Luggage-Bags-Cases-Catalog/Bags-Cases-Boxes.html',
+        name:        'Bags, Cases & Boxes',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Bags.html',
+        fallbackUrl: 'https://www.made-in-china.com/Bags-Cases-Boxes-Catalog/Handbag.html',
     },
     {
-        name: 'Chemicals',
-        url:  'https://www.made-in-china.com/Chemicals-Catalog/Chemicals.html',
+        name:        'Chemicals',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Chemicals.html',
+        fallbackUrl: 'https://www.made-in-china.com/Chemicals-Catalog/Industrial-Chemical.html',
     },
     {
-        name: 'Computer Products',
-        url:  'https://www.made-in-china.com/Consumer-Electronics-Catalog/Computer-Products.html',
+        name:        'Computer Products',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Computer_Products.html',
+        fallbackUrl: 'https://www.made-in-china.com/Consumer-Electronics-Catalog/Computer-Peripherals.html',
     },
     {
-        name: 'Construction & Decoration',
-        url:  'https://www.made-in-china.com/Construction-Real-Estate-Catalog/Construction-Decoration.html',
+        name:        'Construction & Decoration',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Construction_Material.html',
+        fallbackUrl: 'https://www.made-in-china.com/Construction-Real-Estate-Catalog/Building-Material.html',
     },
     {
-        name: 'Consumer Electronics',
-        url:  'https://www.made-in-china.com/Consumer-Electronics-Catalog/Consumer-Electronics.html',
+        name:        'Consumer Electronics',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Consumer_Electronics.html',
+        fallbackUrl: 'https://www.made-in-china.com/Consumer-Electronics-Catalog/Mobile-Phone.html',
     },
     {
-        name: 'Electrical & Electronics',
-        url:  'https://www.made-in-china.com/Electrical-Equipment-Supplies-Catalog/Electrical-Electronics.html',
+        name:        'Electrical & Electronics',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Electrical_Equipment.html',
+        fallbackUrl: 'https://www.made-in-china.com/Electrical-Electronics-Catalog/Electric-Wire-Cable.html',
     },
     {
-        name: 'Furniture',
-        url:  'https://www.made-in-china.com/Furniture-Catalog/Furniture.html',
+        name:        'Furniture',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Furniture.html',
+        fallbackUrl: 'https://www.made-in-china.com/Furniture-Furnishing-Catalog/Home-Furniture.html',
     },
     {
-        name: 'Health & Medicine',
-        url:  'https://www.made-in-china.com/Health-Medical-Catalog/Health-Medicine.html',
+        name:        'Health & Medicine',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Medical_Equipment.html',
+        fallbackUrl: 'https://www.made-in-china.com/Health-Medicine-Catalog/Massager.html',
     },
     {
-        name: 'Industrial Equipment & Components',
-        url:  'https://www.made-in-china.com/Industrial-Machinery-Catalog/Industrial-Equipment.html',
+        name:        'Industrial Equipment & Components',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Industrial_Equipment.html',
+        fallbackUrl: 'https://www.made-in-china.com/Industrial-Machinery-Catalog/Bearing.html',
     },
     {
-        name: 'Instruments & Meters',
-        url:  'https://www.made-in-china.com/Instruments-Meters-Catalog/Instruments-Meters.html',
+        name:        'Instruments & Meters',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Measuring_Instrument.html',
+        fallbackUrl: 'https://www.made-in-china.com/Instruments-Meters-Catalog/Measuring-Instrument.html',
     },
     {
-        name: 'Light Industry & Daily Use',
-        url:  'https://www.made-in-china.com/Light-Industry-Daily-Use-Catalog/Light-Industry-Daily-Use.html',
+        name:        'Light Industry & Daily Use',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Household_Products.html',
+        fallbackUrl: 'https://www.made-in-china.com/Light-Industry-Daily-Use-Catalog/Household-Product.html',
     },
     {
-        name: 'Lights & Lighting',
-        url:  'https://www.made-in-china.com/Lights-Lighting-Catalog/Lights-Lighting.html',
+        name:        'Lights & Lighting',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/LED_Light.html',
+        fallbackUrl: 'https://www.made-in-china.com/Lights-Lighting-Catalog/LED-Lights.html',
     },
     {
-        name: 'Manufacturing & Processing Machinery',
-        url:  'https://www.made-in-china.com/Manufacturing-Processing-Machinery-Catalog/Manufacturing-Processing-Machinery.html',
+        name:        'Manufacturing & Processing Machinery',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Industrial_Machinery.html',
+        fallbackUrl: 'https://www.made-in-china.com/Manufacturing-Processing-Machinery-Catalog/Plastic-Machine.html',
     },
     {
-        name: 'Metallurgy, Mineral & Energy',
-        url:  'https://www.made-in-china.com/Metallurgy-Mineral-Energy-Catalog/Metallurgy-Mineral-Energy.html',
+        name:        'Metallurgy, Mineral & Energy',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Steel_Products.html',
+        fallbackUrl: 'https://www.made-in-china.com/Metallurgy-Mineral-Energy-Catalog/Steel.html',
     },
     {
-        name: 'Office Supplies',
-        url:  'https://www.made-in-china.com/Office-Supplies-Catalog/Office-Supplies.html',
+        name:        'Office Supplies',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Office_Supplies.html',
+        fallbackUrl: 'https://www.made-in-china.com/Office-Supplies-Catalog/Office-Stationery.html',
     },
     {
-        name: 'Packaging & Printing',
-        url:  'https://www.made-in-china.com/Packaging-Printing-Catalog/Packaging-Printing.html',
+        name:        'Packaging & Printing',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Packaging_Materials.html',
+        fallbackUrl: 'https://www.made-in-china.com/Packaging-Printing-Catalog/Plastic-Packaging.html',
     },
     {
-        name: 'Security & Protection',
-        url:  'https://www.made-in-china.com/Security-Protection-Catalog/Security-Protection.html',
+        name:        'Security & Protection',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Security_Equipment.html',
+        fallbackUrl: 'https://www.made-in-china.com/Security-Protection-Catalog/CCTV-Camera.html',
     },
     {
-        name: 'Sporting Goods & Recreation',
-        url:  'https://www.made-in-china.com/Sporting-Goods-Recreation-Catalog/Sporting-Goods-Recreation.html',
+        name:        'Sporting Goods & Recreation',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Sporting_Goods.html',
+        fallbackUrl: 'https://www.made-in-china.com/Sporting-Goods-Recreation-Catalog/Sports-Equipment.html',
     },
     {
-        name: 'Tools & Hardware',
-        url:  'https://www.made-in-china.com/Tools-Hardware-Catalog/Tools-Hardware.html',
+        name:        'Tools & Hardware',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Power_Tool.html',
+        fallbackUrl: 'https://www.made-in-china.com/Tools-Hardware-Catalog/Power-Tool.html',
     },
     {
-        name: 'Toys',
-        url:  'https://www.made-in-china.com/Toys-Games-Catalog/Toys.html',
+        name:        'Toys',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Toy.html',
+        fallbackUrl: 'https://www.made-in-china.com/Toys-Games-Catalog/Educational-Toys.html',
     },
     {
-        name: 'Transportation',
-        url:  'https://www.made-in-china.com/Transportation-Catalog/Transportation.html',
+        name:        'Transportation',
+        url:         'https://www.made-in-china.com/products-search/hot-china-products/Electric_Bike.html',
+        fallbackUrl: 'https://www.made-in-china.com/Transportation-Catalog/Electric-Bike.html',
     },
 ];
 
@@ -215,9 +244,8 @@ async function scrapeCategory(browser, category) {
             else req.continue();
         });
 
-        // MIC search fallback URL (keyword search, underscores for spaces)
-        const keyword     = category.name.replace(/[^a-z0-9]+/gi, '_');
-        const searchUrl   = `https://www.made-in-china.com/products-search/hot-china-products/${keyword}.html`;
+        // Fallback URL: a known leaf subcategory catalog page
+        const searchUrl = category.fallbackUrl || '';
 
         // Selector for product cards: MIC renders each item in a list container.
         // The most stable anchor is links pointing to *.en.made-in-china.com/product/
@@ -296,12 +324,16 @@ async function scrapeCategory(browser, category) {
 
                 const cardText = card.innerText || '';
 
-                // Price: e.g. "US$68.00-101.00 / Piece" or "US$68.00 / Piece"
-                const priceMatch = cardText.match(/US\$[\d,.]+(?:\s*[-–]\s*[\d,.]+)?\s*\/\s*\w+/);
-                const price      = priceMatch ? priceMatch[0].trim() : 'Contact supplier';
+                // Price — two formats depending on page type:
+                //   Search pages:  "US$200.00-600.00 5 Sets(MOQ)"  (no /unit)
+                //   Catalog pages: "US$0.05-1.8 / Meter"            (with /unit)
+                const priceMatch = cardText.match(
+                    /US\$[\d,.]+(?:\s*[-–]\s*[\d,.]+)?(?:\s*\/\s*[\w.]+)?/
+                );
+                const price = priceMatch ? priceMatch[0].trim() : 'Contact supplier';
 
-                // MOQ: e.g. "10 Pieces  (MOQ)" or "1 Set (MOQ)"
-                const moqMatch = cardText.match(/(\d[\d,]*\s+\w+)\s+\(MOQ\)/i);
+                // MOQ — search pages: "5 Sets(MOQ)"  catalog pages: "1000 Meters  (MOQ)"
+                const moqMatch = cardText.match(/(\d[\d,]*\s+\w+)\s*\(MOQ\)/i);
                 const moq      = moqMatch ? moqMatch[0].trim() : 'MOQ negotiable';
 
                 // Image: prefer data-src (lazy) then src; skip space.png placeholders
