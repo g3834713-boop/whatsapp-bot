@@ -144,6 +144,7 @@ textarea{resize:vertical;min-height:60px}
     <button class="nav-btn" onclick="nav('schedules',this)"><span class="ic"></span>Schedules</button>
     <button class="nav-btn" onclick="nav('autoreply',this)"><span class="ic"></span>Auto-Reply</button>
     <button class="nav-btn" onclick="nav('messages',this)"><span class="ic">✏️</span>Messages &amp; Hours</button>
+    <button class="nav-btn" onclick="nav('settings',this)"><span class="ic">⚙️</span>Bot Settings</button>
     <button class="nav-btn" onclick="nav('campaigns',this)"><span class="ic">📣</span>Campaigns</button>
     <button class="nav-btn" id="navQueue" onclick="nav('queue',this)"><span class="ic">🔔</span>Agent Queue <span id="queueBadge" style="display:none;background:#ef4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:4px;font-weight:700">0</span></button>
   </nav>
@@ -325,7 +326,56 @@ textarea{resize:vertical;min-height:60px}
     </div>
   </div>
 
-  <!-- CAMPAIGNS -->
+  <!-- BOT SETTINGS -->
+  <div class="page" id="page-settings">
+    <h2>Bot Settings</h2>
+    <p class="sub">Keyword shortcuts, agent timeout, discount code prefix and legacy sub-item defaults.</p>
+
+    <!-- General -->
+    <div class="card">
+      <div class="card-title">⚙️ General</div>
+
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px">
+        <div style="flex:1;min-width:160px">
+          <label class="lbl">Agent Mode Timeout <span style="color:#4b5563;font-weight:400">(hours)</span></label>
+          <input type="number" id="st_agentTimeout" min="1" max="72" placeholder="8"
+            title="How many hours of inactivity before the bot resumes replying automatically">
+        </div>
+        <div style="flex:2;min-width:200px">
+          <label class="lbl">Discount Code Prefix</label>
+          <input type="text" id="st_discountPrefix" placeholder="WELCOME-"
+            title="Prefix added to random new-customer discount codes e.g. WELCOME-AB12CD">
+        </div>
+      </div>
+    </div>
+
+    <!-- Keywords -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">🔑 Keyword → Menu Item Map</div>
+      <p class="sub" style="margin-top:6px;margin-bottom:14px">When a customer types one of these words the bot treats it as if they selected that menu item key. Use <code>menu</code> to show the main menu, <code>exit</code> to end the session.</p>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="font-size:11px;color:#4b5563;text-transform:uppercase;letter-spacing:.6px">
+          <th style="padding:6px 8px;text-align:left">Word customer types</th>
+          <th style="padding:6px 8px;text-align:left">Maps to key / action</th>
+          <th style="padding:6px 8px;width:40px"></th>
+        </tr></thead>
+        <tbody id="kwTbody"></tbody>
+      </table>
+      <button class="btn btn-add" style="width:100%;margin-top:10px;font-size:12px" onclick="addKeyword()">➕ Add Keyword</button>
+    </div>
+
+    <!-- Legacy sub-items -->
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">📌 Default Payment Sub-items</div>
+      <p class="sub" style="margin-top:6px;margin-bottom:14px">These sub-items are injected automatically when the bot converts an old-format Payment menu item (key&nbsp;<b>6</b>) that has no sub-items yet.</p>
+      <div id="legacySubsContainer"></div>
+      <button class="btn btn-add" style="width:100%;margin-top:10px;font-size:12px" onclick="addLegacySub()">➕ Add Sub-item</button>
+    </div>
+
+    <div class="flex-end" style="margin-top:16px">
+      <button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button>
+    </div>
+  </div>
   <div class="page" id="page-campaigns">
     <h2>Campaigns</h2>
     <p class="sub">Out of office mode, scheduled promo blasts &amp; re-engagement automation.</p>
@@ -503,6 +553,7 @@ function nav(page, btn) {
   if (page==='queue') loadQueue();
   if (page==='campaigns') loadCampaigns();
   if (page==='messages') loadMessages();
+  if (page==='settings') loadSettings();
 }
 
 //  Chats 
@@ -1022,6 +1073,153 @@ async function saveMessages() {
     body: JSON.stringify(payload),
   }).then(r => r.json());
   toast(r.ok ? '✅ Messages & Hours saved!' : '❌ ' + r.error, r.ok ? 'ok' : 'err');
+}
+
+// ── Bot Settings ─────────────────────────────────────────────────────────────
+const ST_DEFAULTS = {
+  agentTimeoutHours:  8,
+  discountCodePrefix: 'WELCOME-',
+  legacyPaymentSubItems: [
+    { key:'1', label:'💳 Pay for Order',    response:'💳 *Pay for Order*\n\nAfter payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'pay'  },
+    { key:'2', label:'🚚 Pay for Shipping', response:'🚚 *Pay for Shipping*\n\nAfter payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'ship' },
+  ],
+  keywords: [
+    {word:'hi',target:'menu'},{word:'hello',target:'menu'},{word:'hey',target:'menu'},
+    {word:'hii',target:'menu'},{word:'hiii',target:'menu'},{word:'menu',target:'menu'},
+    {word:'help',target:'menu'},{word:'start',target:'menu'},{word:'info',target:'menu'},
+    {word:'00',target:'menu'},{word:'order',target:'2'},{word:'price',target:'1'},
+    {word:'prices',target:'1'},{word:'product',target:'1'},{word:'products',target:'1'},
+    {word:'hours',target:'5'},{word:'track',target:'3'},{word:'support',target:'4'},
+    {word:'agent',target:'0'},{word:'human',target:'0'},{word:'pay',target:'6'},
+    {word:'payment',target:'6'},{word:'payments',target:'6'},{word:'paying',target:'6'},
+    {word:'10',target:'exit'},{word:'exit',target:'exit'},{word:'bye',target:'exit'},{word:'done',target:'exit'},
+  ],
+};
+
+let stData = {};
+
+async function loadSettings() {
+  let raw = {};
+  try { raw = await fetch('/api/settings').then(r => r.json()); } catch(e) {}
+  stData = Object.assign({}, ST_DEFAULTS, raw);
+  if (!stData.keywords || !stData.keywords.length) stData.keywords = ST_DEFAULTS.keywords;
+  if (!stData.legacyPaymentSubItems || !stData.legacyPaymentSubItems.length)
+    stData.legacyPaymentSubItems = ST_DEFAULTS.legacyPaymentSubItems;
+
+  document.getElementById('st_agentTimeout').value   = stData.agentTimeoutHours  || 8;
+  document.getElementById('st_discountPrefix').value = stData.discountCodePrefix  || 'WELCOME-';
+  renderKeywords(stData.keywords);
+  renderLegacySubs(stData.legacyPaymentSubItems);
+}
+
+function renderKeywords(kws) {
+  const tbody = document.getElementById('kwTbody');
+  if (!tbody) return;
+  tbody.innerHTML = kws.map((kw, i) => `
+    <tr style="border-top:1px solid #1e2535" id="kw-row-${i}">
+      <td style="padding:6px 8px">
+        <input type="text" class="kw-word" data-i="${i}" value="${esc(kw.word||'')}"
+          placeholder="e.g. order" style="font-family:monospace;font-size:12px">
+      </td>
+      <td style="padding:6px 8px">
+        <input type="text" class="kw-target" data-i="${i}" value="${esc(kw.target||'')}"
+          placeholder="menu / exit / 1 / 2 …" style="font-family:monospace;font-size:12px;width:130px">
+      </td>
+      <td style="padding:6px 8px;text-align:center">
+        <button class="btn-icon danger" onclick="removeKeyword(${i})" title="Remove">&times;</button>
+      </td>
+    </tr>`).join('');
+}
+
+function addKeyword() {
+  syncKeywordsFromDOM();
+  stData.keywords.push({ word: '', target: 'menu' });
+  renderKeywords(stData.keywords);
+  const rows = document.querySelectorAll('#kwTbody tr');
+  if (rows.length) rows[rows.length-1].querySelector('.kw-word')?.focus();
+}
+
+function removeKeyword(i) {
+  syncKeywordsFromDOM();
+  stData.keywords.splice(i, 1);
+  renderKeywords(stData.keywords);
+}
+
+function syncKeywordsFromDOM() {
+  document.querySelectorAll('.kw-word').forEach(el => {
+    const i = parseInt(el.dataset.i);
+    if (stData.keywords[i]) stData.keywords[i].word = el.value.trim().toLowerCase();
+  });
+  document.querySelectorAll('.kw-target').forEach(el => {
+    const i = parseInt(el.dataset.i);
+    if (stData.keywords[i]) stData.keywords[i].target = el.value.trim();
+  });
+}
+
+function renderLegacySubs(subs) {
+  const c = document.getElementById('legacySubsContainer');
+  if (!c) return;
+  c.innerHTML = (subs || []).map((s, i) => `
+    <div class="si-row" id="lsub-${i}" style="margin-bottom:8px">
+      <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:6px">
+        <div><label class="lbl" style="font-size:10px">Key</label>
+          <input type="text" class="ls-key" data-i="${i}" value="${esc(s.key||'')}" style="width:55px;font-family:monospace;font-size:12px"></div>
+        <div style="flex:1"><label class="lbl" style="font-size:10px">Label</label>
+          <input type="text" class="ls-label" data-i="${i}" value="${esc(s.label||'')}" style="font-size:12px"></div>
+        <div><label class="lbl" style="font-size:10px">Image slug</label>
+          <input type="text" class="ls-image" data-i="${i}" value="${esc(s.image||'')}" style="width:70px;font-family:monospace;font-size:12px" placeholder="pay"></div>
+        <button class="btn-icon danger" onclick="removeLegacySub(${i})" title="Remove">&times;</button>
+      </div>
+      <label class="lbl" style="font-size:10px">Response</label>
+      <textarea class="ls-resp" data-i="${i}" rows="3" style="font-size:12px;font-family:monospace">${esc2(s.response||'')}</textarea>
+    </div>`).join('');
+}
+
+function addLegacySub() {
+  syncLegacySubsFromDOM();
+  stData.legacyPaymentSubItems.push({ key:'', label:'', response:'', image:'' });
+  renderLegacySubs(stData.legacyPaymentSubItems);
+}
+
+function removeLegacySub(i) {
+  syncLegacySubsFromDOM();
+  stData.legacyPaymentSubItems.splice(i, 1);
+  renderLegacySubs(stData.legacyPaymentSubItems);
+}
+
+function syncLegacySubsFromDOM() {
+  document.querySelectorAll('.ls-key').forEach(el => {
+    const i = parseInt(el.dataset.i);
+    if (stData.legacyPaymentSubItems[i]) stData.legacyPaymentSubItems[i].key = el.value.trim();
+  });
+  document.querySelectorAll('.ls-label').forEach(el => {
+    const i = parseInt(el.dataset.i);
+    if (stData.legacyPaymentSubItems[i]) stData.legacyPaymentSubItems[i].label = el.value;
+  });
+  document.querySelectorAll('.ls-resp').forEach(el => {
+    const i = parseInt(el.dataset.i);
+    if (stData.legacyPaymentSubItems[i]) stData.legacyPaymentSubItems[i].response = el.value;
+  });
+  document.querySelectorAll('.ls-image').forEach(el => {
+    const i = parseInt(el.dataset.i);
+    if (stData.legacyPaymentSubItems[i]) stData.legacyPaymentSubItems[i].image = el.value.trim();
+  });
+}
+
+async function saveSettings() {
+  syncKeywordsFromDOM();
+  syncLegacySubsFromDOM();
+  stData.agentTimeoutHours  = parseFloat(document.getElementById('st_agentTimeout').value)  || 8;
+  stData.discountCodePrefix = (document.getElementById('st_discountPrefix').value || 'WELCOME-').trim();
+  // Strip blank keyword rows
+  stData.keywords = stData.keywords.filter(k => k.word && k.target);
+  const r = await fetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(stData),
+  }).then(r => r.json());
+  toast(r.ok ? '✅ Settings saved!' : '❌ ' + r.error, r.ok ? 'ok' : 'err');
+  if (r.ok) renderKeywords(stData.keywords); // re-render to clean blank rows
 }
 
 // ── Connect / Disconnect ─────────────────────────────────────────────────────

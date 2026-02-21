@@ -343,7 +343,20 @@ app.post('/api/messages', (req, res) => {
         res.json({ ok: true });
     } catch (e) { res.json({ ok: false, error: e.message }); }
 });
+// ── API: bot settings ─────────────────────────────────────────────────────
+const SETTINGS_PATH = path.join(__dirname, '..', 'config', 'settings.json');
 
+app.get('/api/settings', (req, res) => {
+    try { res.json(JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'))); }
+    catch (_) { res.json({}); }
+});
+
+app.post('/api/settings', (req, res) => {
+    try {
+        fs.writeFileSync(SETTINGS_PATH, JSON.stringify(req.body, null, 2));
+        res.json({ ok: true });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+});
 // ── API: payment images ───────────────────────────────────────────────────────
 const IMAGES_DIR = path.join(__dirname, '..', 'images');
 

@@ -1,0 +1,38 @@
+{
+  "agentTimeoutHours": 8,
+  "discountCodePrefix": "WELCOME-",
+  "legacyPaymentSubItems": [
+    { "key": "1", "label": "💳 Pay for Order",    "response": "💳 *Pay for Order*\n\nAfter payment, please submit your screenshot.\n\n_Enter *10* to exit_", "image": "pay"  },
+    { "key": "2", "label": "🚚 Pay for Shipping", "response": "🚚 *Pay for Shipping*\n\nAfter payment, please submit your screenshot.\n\n_Enter *10* to exit_", "image": "ship" }
+  ],
+  "keywords": [
+    { "word": "hi",       "target": "menu" },
+    { "word": "hello",    "target": "menu" },
+    { "word": "hey",      "target": "menu" },
+    { "word": "hii",      "target": "menu" },
+    { "word": "hiii",     "target": "menu" },
+    { "word": "menu",     "target": "menu" },
+    { "word": "help",     "target": "menu" },
+    { "word": "start",    "target": "menu" },
+    { "word": "info",     "target": "menu" },
+    { "word": "00",       "target": "menu" },
+    { "word": "order",    "target": "2" },
+    { "word": "price",    "target": "1" },
+    { "word": "prices",   "target": "1" },
+    { "word": "product",  "target": "1" },
+    { "word": "products", "target": "1" },
+    { "word": "hours",    "target": "5" },
+    { "word": "track",    "target": "3" },
+    { "word": "support",  "target": "4" },
+    { "word": "agent",    "target": "0" },
+    { "word": "human",    "target": "0" },
+    { "word": "pay",      "target": "6" },
+    { "word": "payment",  "target": "6" },
+    { "word": "payments", "target": "6" },
+    { "word": "paying",   "target": "6" },
+    { "word": "10",       "target": "exit" },
+    { "word": "exit",     "target": "exit" },
+    { "word": "bye",      "target": "exit" },
+    { "word": "done",     "target": "exit" }
+  ]
+}

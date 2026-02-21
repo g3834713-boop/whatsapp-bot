@@ -13,11 +13,44 @@ const { isOOO, getOOOMessage } = require('./ooo');
 const CONFIG_PATH     = path.join(__dirname, '..', 'config', 'autoreply.json');
 const MESSAGES_PATH   = path.join(__dirname, '..', 'config', 'messages.json');
 const AGENT_MODE_FILE = path.join(__dirname, '..', 'config', 'agentmode.json');
+const SETTINGS_PATH   = path.join(__dirname, '..', 'config', 'settings.json');
+
+const SETTINGS_DEFAULTS = {
+    agentTimeoutHours:    8,
+    discountCodePrefix:   'WELCOME-',
+    legacyPaymentSubItems: [
+        { key:'1', label:'💳 Pay for Order',    response:'💳 *Pay for Order*\n\nAfter payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'pay'  },
+        { key:'2', label:'🚚 Pay for Shipping', response:'🚚 *Pay for Shipping*\n\nAfter payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'ship' },
+    ],
+    keywords: [],
+};
+
+function loadSettings() {
+    try {
+        return Object.assign({}, SETTINGS_DEFAULTS, JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8')));
+    } catch (e) { return SETTINGS_DEFAULTS; }
+}
+
+/** Build keyword→key map from settings, merging over numeric item-key pass-throughs */
+function loadKeywords() {
+    const settings = loadSettings();
+    const map = {};
+    for (const { word, target } of (settings.keywords || [])) {
+        if (word) map[word.toLowerCase().trim()] = target;
+    }
+    return map;
+}
+
+/** Get agent-mode timeout in ms from settings */
+function getAgentTimeoutMs() {
+    return (loadSettings().agentTimeoutHours || 8) * 60 * 60 * 1000;
+}
 
 // Normalise old { responses:{...} } format to new { menuItems:[...] } format
 function normalizeConfig(raw) {
     if (raw.menuItems && Array.isArray(raw.menuItems) && raw.menuItems.length) return raw;
     const ORDER = ['1','2','3','4','5','6','0'];
+    const legacySubs = loadSettings().legacyPaymentSubItems || [];
     const menuItems = ORDER
         .filter(k => raw.responses && raw.responses[k])
         .map(k => ({
@@ -25,10 +58,7 @@ function normalizeConfig(raw) {
             label:     (raw.responses[k].split('\n')[0] || '').replace(/\*/g,'').trim(),
             response:  raw.responses[k],
             agentMode: k === '0',
-            subItems:  k === '6' ? [
-                { key:'1', label:'💳 Pay for Order',    response:'After payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'pay'  },
-                { key:'2', label:'🚚 Pay for Shipping', response:'After payment, please submit your screenshot.\n\n_Enter *10* to exit_', image:'ship' },
-            ] : [],
+            subItems:  k === '6' ? legacySubs : [],
         }));
     return Object.assign({}, raw, { menuItems });
 }
@@ -76,7 +106,7 @@ const submenuContext = new Map();
 // ── Agent mode ────────────────────────────────────────────────────────────────
 // Map: contactId → timestamp when agent mode was last refreshed
 // Persisted to disk so it survives bot restarts.
-const AGENT_MODE_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 hours of inactivity
+// Timeout is read dynamically from config/settings.json (agentTimeoutHours).
 
 const agentMode = new Map();
 
@@ -94,7 +124,7 @@ function loadAgentMode() {
         const now  = Date.now();
         for (const [k, v] of Object.entries(data)) {
             // Only restore entries that haven't expired yet
-            if (now - v < AGENT_MODE_TIMEOUT_MS) agentMode.set(k, v);
+            if (now - v < getAgentTimeoutMs()) agentMode.set(k, v);
         }
         if (agentMode.size) console.log(`[AUTO-REPLY] Restored ${agentMode.size} agent mode session(s) from disk`);
     } catch (e) { /* file missing on first run — fine */ }
@@ -194,6 +224,8 @@ const KEYWORDS = {
     '10': 'exit', 'exit': 'exit', 'bye': 'exit', 'done': 'exit',
 };
 
+// Kept as a static fallback — loadKeywords() overrides with settings.json values at runtime.
+
 /** Strips emojis / symbols, lowercases — used for label matching */
 function normalize(str) {
     return str
@@ -272,20 +304,21 @@ async function handleAutoReply(client, msg) {
         } catch (e) { /* non-fatal */ }
         // ─────────────────────────────────────────────────────────────────────
 
-        // ── Agent mode: stay silent unless user sends a command, or 8hrs expire ──
+        // ── Agent mode: stay silent unless user sends a command, or timeout expires ──
         if (agentMode.has(from)) {
             const bodyRawCheck = (msg.body || '').trim();
             const bodyLowCheck = bodyRawCheck.toLowerCase();
             const elapsed = Date.now() - agentMode.get(from);
+            const kw = loadKeywords();
 
-            if (elapsed >= AGENT_MODE_TIMEOUT_MS) {
+            if (elapsed >= getAgentTimeoutMs()) {
                 // 8 hours of inactivity — release
                 agentMode.delete(from);
                 saveAgentMode();
                 removeFromQueue(from);
-                console.log('[AGENT] Expired (8hr inactivity) for ' + from);
+                console.log('[AGENT] Expired (inactivity) for ' + from);
                 // fall through to normal handling
-            } else if (KEYWORDS[bodyLowCheck] || KEYWORDS[bodyRawCheck] || matchLabel(bodyRawCheck, buildLabelMap(cfg))) {
+            } else if (kw[bodyLowCheck] || kw[bodyRawCheck] || matchLabel(bodyRawCheck, buildLabelMap(cfg))) {
                 // User deliberately sent a bot command — release agent mode
                 agentMode.delete(from);
                 saveAgentMode();
@@ -306,9 +339,10 @@ async function handleAutoReply(client, msg) {
         if (!bodyRaw) return false;
 
         // Resolve the menu key early so we can decide whether to bypass hours checks.
+        const kw           = loadKeywords();
         const _labelMap    = buildLabelMap(cfg);
         const _itemKeys    = new Set((cfg.menuItems || []).map(i => i.key));
-        const _resolvedKey = KEYWORDS[bodyLow] || KEYWORDS[bodyRaw]
+        const _resolvedKey = kw[bodyLow] || kw[bodyRaw]
             || (_itemKeys.has(bodyLow) ? bodyLow : null)
             || (_itemKeys.has(bodyRaw) ? bodyRaw : null)
             || matchLabel(bodyRaw, _labelMap);

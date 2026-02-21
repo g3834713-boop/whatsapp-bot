@@ -7,7 +7,15 @@
 const fs   = require('fs');
 const path = require('path');
 
-const FILE = path.join(__dirname, '..', 'config', 'customers.json');
+const FILE          = path.join(__dirname, '..', 'config', 'customers.json');
+const SETTINGS_FILE = path.join(__dirname, '..', 'config', 'settings.json');
+
+function loadDiscountPrefix() {
+    try {
+        const s = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+        return (s.discountCodePrefix || 'WELCOME-').trim();
+    } catch (e) { return 'WELCOME-'; }
+}
 
 function load() {
     try {
@@ -33,7 +41,7 @@ function save(data) {
 function recordCustomer(contactId, name) {
     const data = load();
     if (data[contactId]) return null; // already known
-    const code = 'WELCOME-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+    const code = loadDiscountPrefix() + Math.random().toString(36).substr(2, 6).toUpperCase();
     const customer = {
         id:           contactId,
         name:         name || '',
