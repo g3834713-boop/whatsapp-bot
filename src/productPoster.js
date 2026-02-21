@@ -54,6 +54,23 @@ const NAMES_POOL = [
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// ── Price conversion ─────────────────────────────────────────────────────────
+/**
+ * Parse a MIC USD price string, divide by 2, and return formatted Ghana Cedis.
+ * e.g. "US$200.00-600.00 / Piece" → "₵100.00 – ₵300.00"
+ *      "US$50.00"                  → "₵25.00"
+ */
+function convertToGhsCedis(priceStr) {
+    if (!priceStr || priceStr === 'Contact supplier') return priceStr || 'Contact supplier';
+    const match = priceStr.match(/US\$\s*([\d,.]+)(?:\s*[-\u2013]\s*([\d,.]+))?/);
+    if (!match) return priceStr;
+    const parseNum = s => parseFloat(s.replace(/,/g, ''));
+    const lo = parseNum(match[1]) / 2;
+    const hi = match[2] ? parseNum(match[2]) / 2 : null;
+    const fmt = n => '\u20B5' + n.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return hi ? `${fmt(lo)} \u2013 ${fmt(hi)}` : fmt(lo);
+}
+
 // ── Config helpers ────────────────────────────────────────────────────────────
 function loadFeedConfig() {
     try { return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(FEED_FILE, 'utf8')) }; }
@@ -103,17 +120,18 @@ function buildCaption(product, cfg) {
         `${i + 1}. ${name}${paidSet.has(name) ? ' ✅' : ''}`
     ).join('\n');
 
+    const ghsPrice = convertToGhsCedis(product.price);
+
     const lines = [
         `🛍️ *${product.title}*`,
         ``,
-        `💰 *Price:* ${product.price}`,
+        `💰 *Price:* ${ghsPrice}`,
         `📦 *MOQ:* ${product.minOrder}`,
         ``,
         `📋 *Current Order List:*`,
         orderLines,
         ``,
         `_Reply with your name to join this order!_`,
-        `_Type *00* for full product menu_`,
     ];
 
     return lines.join('\n');
@@ -155,7 +173,7 @@ async function runDailyFeed(client, emitFn) {
                         reqOptions: {
                             headers: {
                                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                                'Referer':    'https://www.alibaba.com/',
+                                'Referer':    'https://www.made-in-china.com/',
                             },
                         },
                     });
