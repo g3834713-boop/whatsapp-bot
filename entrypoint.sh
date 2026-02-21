@@ -26,9 +26,8 @@ if [ ! -L /app/config ]; then
 fi
 
 # ── Clear stale Chromium lock files left by previous containers ─────────────
-# Chromium writes SingletonLock/Cookie/Socket into the profile directory and
-# sub-directories. On Railway a new container gets a new hostname, so the old
-# locks look foreign and block startup. Remove them all before launching Node.
+# Each service may use a different CLIENT_ID, but we wipe all singleton locks
+# under .wwebjs_auth regardless, since only one session runs per container.
 if [ -d "$DATA_DIR/.wwebjs_auth" ]; then
   find "$DATA_DIR/.wwebjs_auth" \
     \( -name 'SingletonLock' -o -name 'SingletonCookie' -o -name 'SingletonSocket' \) \

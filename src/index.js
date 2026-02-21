@@ -14,6 +14,10 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const CHROME_PATH = process.env.CHROMIUM_PATH
     || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 
+// Each Railway service gets its own CLIENT_ID so sessions don't collide.
+// Default keeps backwards-compat for local dev.
+const CLIENT_ID = process.env.CLIENT_ID || 'whatsapp-bot';
+
 const { handleCommand } = require('./commands');
 const { startScheduler } = require('./scheduler');
 const { handleAutoReply, agentSentMessage, releaseContact } = require('./autoreply');
@@ -23,7 +27,7 @@ const { startCampaigns } = require('./campaigns');
 // Create client with persistent session (no re-scan after restart)
 const client = new Client({
     authStrategy: new LocalAuth({
-        clientId: 'whatsapp-bot',
+        clientId: CLIENT_ID,
         dataPath: path.join(DATA_DIR, '.wwebjs_auth')
     }),
     puppeteer: {
