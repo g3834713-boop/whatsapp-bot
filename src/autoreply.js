@@ -373,7 +373,9 @@ async function handleAutoReply(client, msg) {
                 console.log('[AGENT] ON for ' + from);
                 // Notify the agent (bot owner) and add to the queue
                 try {
-                    const ownerJid = client.info.wid._serialized;
+                    // client.info.wid._serialized returns @lid on newer WhatsApp —
+                    // use .user + @c.us to get the proper sendable JID.
+                    const ownerJid = (client.info.wid.user || '') + '@c.us';
                     const disp     = contactName || from.split('@')[0];
                     const notif    =
                         `🔔 *New Agent Request*\n\n` +
@@ -381,7 +383,14 @@ async function handleAutoReply(client, msg) {
                         `📞 Number: +${from.split('@')[0]}\n` +
                         `🕐 Time: ${new Date().toLocaleString()}\n\n` +
                         `_The bot is now silent for this conversation._`;
-                    trackBotMessage(await client.sendMessage(ownerJid, notif));
+                    // Temporarily mark ownerJid as "bot is replying" so the
+                    // message_create race doesn't put the owner into agent mode.
+                    botReplying.add(ownerJid);
+                    try {
+                        trackBotMessage(await client.sendMessage(ownerJid, notif));
+                    } finally {
+                        botReplying.delete(ownerJid);
+                    }
                     addToQueue(from, disp);
                 } catch (e) { console.error('[AGENT] Notify error:', e.message); }
             }
