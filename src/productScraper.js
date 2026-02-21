@@ -223,7 +223,7 @@ async function scrapeCategory(browser, category) {
         // If SCRAPER_API_KEY is set, route through ScraperAPI residential proxies.
         const scraperKey = process.env.SCRAPER_API_KEY;
         const searchUrl = scraperKey
-            ? `http://api.scraperapi.com?api_key=${scraperKey}&url=${encodeURIComponent(directUrl)}&render=true`
+            ? `http://api.scraperapi.com?api_key=${scraperKey}&url=${encodeURIComponent(directUrl)}&render=true&premium=true`
             : directUrl;
 
         if (!scraperKey) {
