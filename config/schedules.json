@@ -1,0 +1,284 @@
+[
+  {
+    "name": "My Self (test)",
+    "type": "self",
+    "mode": "rotating",
+    "chatId": "233256729896@c.us",
+    "intervalSeconds": 40,
+    "enabled": false,
+    "tasks": [
+      {
+        "type": "text",
+        "message": "Stay focused!"
+      }
+    ]
+  },
+  {
+    "name": "Friends Group",
+    "type": "group",
+    "mode": "rotating",
+    "chatId": "120363407503088466@g.us",
+    "intervalSeconds": 120,
+    "enabled": false,
+    "tasks": [
+      {
+        "type": "text",
+        "message": "Good morning everyone!"
+      }
+    ]
+  },
+  {
+    "name": "Task Chanel",
+    "type": "channel",
+    "mode": "sequential",
+    "chatId": "120363423041640220@newsletter",
+    "enabled": false,
+    "tasks": [
+      {
+        "durationMinutes": 30,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #1\n\n Copy Amazon Product Link\n\nProduct: Wireless Bluetooth Headphones\n\nPaste the link into your working site and earn your commission!\n\n Duration: 30 minutes",
+          "images": [
+            {
+              "file": "1.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #1 COMPLETED - Duration was 30 minutes"
+        }
+      },
+      {
+        "durationMinutes": 50,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #2\n\n Process Teller Packages\n\nHandle and process teller package items as instructed.\n\n Duration: 50 minutes",
+          "images": [
+            {
+              "file": "2.png",
+              "caption": ""
+            },
+            {
+              "file": "teller.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #2 COMPLETED - Duration was 50 minutes"
+        }
+      },
+      {
+        "durationMinutes": 30,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #3\n\n Copy Amazon Product Link\n\nProduct: USB-C Fast Charging Cable\n\nPaste the link into your working site and earn your commission!\n\n Duration: 30 minutes",
+          "images": [
+            {
+              "file": "3.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #3 COMPLETED - Duration was 30 minutes"
+        }
+      },
+      {
+        "durationMinutes": 50,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #4\n\n Process Teller Packages\n\nHandle and process teller package items as instructed.\n\n Duration: 50 minutes",
+          "images": [
+            {
+              "file": "4.png",
+              "caption": ""
+            },
+            {
+              "file": "teller.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #4 COMPLETED - Duration was 50 minutes"
+        }
+      },
+      {
+        "durationMinutes": 30,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #5\n\n Copy Amazon Product Link\n\nProduct: Portable Phone Charger\n\nPaste the link into your working site and earn your commission!\n\n Duration: 30 minutes",
+          "images": [
+            {
+              "file": "5.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #5 COMPLETED - Duration was 30 minutes"
+        }
+      },
+      {
+        "durationMinutes": 50,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #6\n\n Process Teller Packages\n\nHandle and process teller package items as instructed.\n\n Duration: 50 minutes",
+          "images": [
+            {
+              "file": "6.png",
+              "caption": ""
+            },
+            {
+              "file": "teller.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #6 COMPLETED - Duration was 50 minutes"
+        }
+      },
+      {
+        "durationMinutes": 30,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #7\n\n Copy Amazon Product Link\n\nProduct: LED Desk Lamp\n\nPaste the link into your working site and earn your commission!\n\n Duration: 30 minutes",
+          "images": [
+            {
+              "file": "7.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #7 COMPLETED - Duration was 30 minutes"
+        }
+      },
+      {
+        "durationMinutes": 50,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #8\n\n Process Teller Packages\n\nHandle and process teller package items as instructed.\n\n Duration: 50 minutes",
+          "images": [
+            {
+              "file": "8.png",
+              "caption": ""
+            },
+            {
+              "file": "teller.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #8 COMPLETED - Duration was 50 minutes"
+        }
+      },
+      {
+        "durationMinutes": 30,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #9\n\n Copy Amazon Product Link\n\nProduct: Mechanical Keyboard\n\nPaste the link into your working site and earn your commission!\n\n Duration: 30 minutes",
+          "images": [
+            {
+              "file": "9.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #9 COMPLETED - Duration was 30 minutes"
+        }
+      },
+      {
+        "durationMinutes": 50,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #10\n\n Process Teller Packages\n\nHandle and process teller package items as instructed.\n\n Duration: 50 minutes",
+          "images": [
+            {
+              "file": "10.png",
+              "caption": ""
+            },
+            {
+              "file": "teller.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #10 COMPLETED - Duration was 50 minutes"
+        }
+      },
+      {
+        "durationMinutes": 30,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #11\n\n Copy Amazon Product Link\n\nProduct: Wireless Mouse\n\nPaste the link into your working site and earn your commission!\n\n Duration: 30 minutes",
+          "images": [
+            {
+              "file": "11.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #11 COMPLETED - Duration was 30 minutes"
+        }
+      },
+      {
+        "durationMinutes": 50,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #12\n\n Process Teller Packages\n\nHandle and process teller package items as instructed.\n\n Duration: 50 minutes",
+          "images": [
+            {
+              "file": "12.png",
+              "caption": ""
+            },
+            {
+              "file": "teller.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #12 COMPLETED - Duration was 50 minutes"
+        }
+      },
+      {
+        "durationMinutes": 30,
+        "start": {
+          "type": "multi-image",
+          "message": " Task #13\n\n Copy Amazon Product Link\n\nProduct: Phone Screen Protector\n\nPaste the link into your working site and earn your commission!\n\n Duration: 30 minutes",
+          "images": [
+            {
+              "file": "13.png",
+              "caption": ""
+            }
+          ]
+        },
+        "completion": {
+          "type": "text",
+          "message": " Task #13 COMPLETED - Duration was 30 minutes"
+        }
+      }
+    ]
+  }
+]
