@@ -29,6 +29,8 @@ const client = new Client({
     puppeteer: {
         headless: true,
         executablePath: CHROME_PATH,
+        // Use /tmp for Chrome's profile dir so lock files never persist across restarts
+        userDataDir: '/tmp/chrome-profile',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
@@ -36,7 +38,8 @@ const client = new Client({
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--single-process'
         ]
     }
 });
@@ -120,25 +123,6 @@ client.on('disconnected', (reason) => {
 startDashboard(3000);
 setBotClient(client);
 setReleaseCallback(releaseContact); // Allow dashboard to release agent mode
-
-// Recursively remove stale Chromium lock files (Railway restarts leave these behind)
-function removeChromiumLocks(dir) {
-    if (!fs.existsSync(dir)) return;
-    try {
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-            const full = path.join(dir, entry.name);
-            if (entry.isDirectory()) {
-                removeChromiumLocks(full);
-            } else if (['SingletonLock', 'SingletonCookie', 'SingletonSocket'].includes(entry.name)) {
-                fs.unlinkSync(full);
-                console.log(`[BOT] Removed stale lock: ${full}`);
-            }
-        }
-    } catch (e) {
-        console.warn('[BOT] Lock cleanup warning:', e.message);
-    }
-}
-removeChromiumLocks(path.join(DATA_DIR, '.wwebjs_auth'));
 
 console.log('[BOT] Starting WhatsApp bot...');
 client.initialize();
