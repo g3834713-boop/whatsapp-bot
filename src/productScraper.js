@@ -232,9 +232,15 @@ async function scrapeCategory(browser, category) {
             await page.waitForSelector(selectorStr, { timeout: 15000 });
             found = true;
         } catch (_) {
-            // Dump HTML so we can inspect what Alibaba returned
-            const html = await page.content();
-            console.warn(`[SCRAPER] No product cards for "${category.name}" -- check debug HTML`);
+            const html  = await page.content();
+            const title = await page.title();
+            // Print diagnostic info directly to console (visible in Railway logs)
+            const bodyText = await page.evaluate(() =>
+                (document.body ? document.body.innerText : '').slice(0, 800)
+            );
+            console.warn(`[SCRAPER] No product cards for "${category.name}"`);
+            console.warn(`[SCRAPER] Page title: "${title}"`);
+            console.warn(`[SCRAPER] Body snippet:\n${bodyText}\n---`);
             saveDebugHtml(category.name, html);
         }
 
