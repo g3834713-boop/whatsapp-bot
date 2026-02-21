@@ -105,6 +105,11 @@ function closedMessage() {
 // so they never accidentally refresh or clear agent mode.
 const botSentIds = new Set();
 
+// Set of contactIds the bot is currently auto-replying to.
+// message_create fires BEFORE sendMessage resolves, so trackBotMessage is too slow.
+// This flag blocks agentSentMessage during the entire handleAutoReply call.
+const botReplying = new Set();
+
 /** Register a sent message so releaseAgentMode ignores it. */
 function trackBotMessage(sentMsg) {
     if (!sentMsg) return;
@@ -212,11 +217,11 @@ async function sendWelcome(client, from, newCust, cfg) {
 }
 
 async function handleAutoReply(client, msg) {
+    const from = msg.from;
+    botReplying.add(from);
     try {
         const cfg = loadConfig();
         if (!cfg.enabled) return false;
-
-        const from = msg.from;
 
         // ── Record / touch customer ───────────────────────────────────────────
         let contactName  = '';
@@ -394,6 +399,8 @@ async function handleAutoReply(client, msg) {
     } catch (err) {
         console.error('[AUTO-REPLY] Error:', err.message);
         return false;
+    } finally {
+        botReplying.delete(from);
     }
 }
 
@@ -404,6 +411,10 @@ async function handleAutoReply(client, msg) {
  *   timer if already on) so the bot stays silent for that conversation.
  */
 function agentSentMessage(msgId, contactId) {
+    // Ignore events fired while the bot is in the middle of auto-replying
+    // (message_create races ahead of sendMessage's resolved promise)
+    if (botReplying.has(contactId)) return false;
+
     // Ignore bot's own auto-sent messages
     if (msgId && botSentIds.has(msgId)) {
         botSentIds.delete(msgId); // consume
