@@ -281,8 +281,9 @@ io.on('connection', (socket) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 function startDashboard(port = 3000) {
-    server.listen(port, () => {
-        console.log(`[DASHBOARD] Open http://localhost:${port} in your browser`);
+    const actualPort = process.env.PORT || port;
+    server.listen(actualPort, () => {
+        console.log(`[DASHBOARD] Open http://localhost:${actualPort} in your browser`);
     });
 }
 
