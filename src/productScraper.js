@@ -79,8 +79,8 @@ const CATEGORIES = [
     },
     {
         name:        'Consumer Electronics',
-        url:         'https://www.made-in-china.com/Consumer-Electronics-Catalog/Mobile-Phone.html',
-        fallbackUrl: 'https://www.made-in-china.com/Consumer-Electronics-Catalog/Bluetooth-Speaker.html',
+        url:         'https://www.made-in-china.com/Consumer-Electronics-Catalog/Refrigerator-Freezer-Parts.html',
+        fallbackUrl: 'https://www.made-in-china.com/Consumer-Electronics-Catalog/Mobile-Phone.html',
     },
     {
         name:        'Electrical & Electronics',
@@ -100,7 +100,7 @@ const CATEGORIES = [
     {
         name:        'Industrial Equipment & Components',
         url:         'https://www.made-in-china.com/Industrial-Equipment-Components-Catalog/Water-Pump.html',
-        fallbackUrl: 'https://www.made-in-china.com/Industrial-Equipment-Components-Catalog/Ball-Valve.html',
+        fallbackUrl: 'https://www.made-in-china.com/Industrial-Equipment-Components-Catalog/Power-Generating-Sets.html',
     },
     {
         name:        'Instruments & Meters',
@@ -159,8 +159,8 @@ const CATEGORIES = [
     },
     {
         name:        'Transportation',
-        url:         'https://www.made-in-china.com/products/catlist/listsubcat/144/00/mic/Transportation.html',
-        fallbackUrl: 'https://www.made-in-china.com/Transportation-Catalog/Electric-Bike.html',
+        url:         'https://www.made-in-china.com/Transportation-Catalog/Electric-Bike.html',
+        fallbackUrl: 'https://www.made-in-china.com/products-search/hot-china-products/Electric_Bike.html',
     },
 ];
 
