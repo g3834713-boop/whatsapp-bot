@@ -262,9 +262,12 @@ async function handleAutoReply(client, msg) {
 
         if (!bodyRaw) return false;
 
-        // ── Working hours check ───────────────────────────────────────────────
-        // Skip when: already shown closed msg this session, or user sends 0/00
-        const isBypassCmd = bodyLow === '0' || bodyLow === '00';
+        // Resolve the menu key early so we can decide whether to bypass hours checks.
+        // Any recognised command (numbers, keywords, label text) bypasses hours/OOO
+        // so customers can still browse the menu and get replies at any time.
+        const _labelMap    = buildLabelMap(cfg);
+        const _resolvedKey = KEYWORDS[bodyLow] || KEYWORDS[bodyRaw] || matchLabel(bodyRaw, _labelMap);
+        const isBypassCmd  = !!_resolvedKey;
 
         // ── Out of Office check (overrides working hours) ─────────────────────
         if (isOOO() && !isBypassCmd) {
@@ -318,8 +321,7 @@ async function handleAutoReply(client, msg) {
         }
         // ─────────────────────────────────────────────────────────────────
 
-        const key = KEYWORDS[bodyLow] || KEYWORDS[bodyRaw]
-                 || matchLabel(bodyRaw, buildLabelMap(cfg));
+        const key = _resolvedKey;
 
         if (key === 'exit') {
             paymentSubMenu.delete(from);
