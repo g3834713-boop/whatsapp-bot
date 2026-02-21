@@ -120,5 +120,14 @@ client.on('disconnected', (reason) => {
 startDashboard(3000);
 setBotClient(client);
 setReleaseCallback(releaseContact); // Allow dashboard to release agent mode
+
+// Remove stale Chromium lock files left by previous container runs
+// (Railway restarts can leave these behind, blocking Chromium from starting)
+const authDir = path.join(DATA_DIR, '.wwebjs_auth');
+['SingletonLock', 'SingletonCookie', 'SingletonSocket'].forEach(f => {
+    const p = path.join(authDir, 'session-whatsapp-bot', f);
+    if (fs.existsSync(p)) { fs.unlinkSync(p); console.log(`[BOT] Removed stale lock: ${f}`); }
+});
+
 console.log('[BOT] Starting WhatsApp bot...');
 client.initialize();
