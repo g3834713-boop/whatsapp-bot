@@ -492,7 +492,20 @@ async function handleAutoReply(client, msg) {
             }
         }
 
-        // Unrecognised message — show menu on first contact, nudge after that
+        // If it was a recognised menu command but no item matched (e.g. key with
+        // no response configured), always show the menu — never the nudge.
+        if (isBypassCmd) {
+            submenuContext.delete(from);
+            if (newCustomer && !newCustomer.welcomeSent) {
+                await sendWelcome(client, from, newCustomer, cfg);
+            }
+            trackBotMessage(await client.sendMessage(from, buildMenuText(cfg)));
+            menuShown.add(from);
+            console.log('[AUTO-REPLY] Menu sent (key had no response) to ' + from);
+            return true;
+        }
+
+        // Truly unrecognised message — show menu on first contact, nudge after that
         if (!menuShown.has(from)) {
             if (newCustomer && !newCustomer.welcomeSent) {
                 await sendWelcome(client, from, newCustomer, cfg);
