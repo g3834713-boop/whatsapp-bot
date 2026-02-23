@@ -369,10 +369,13 @@ async function handleAutoReply(client, msg) {
 
         // Resolve the menu key early so we can decide whether to bypass hours checks
         // and whether to skip quick replies (menu commands always take priority).
+        // IMPORTANT: check hardcoded KEYWORDS first so hi/hello/menu/1-6 etc. are
+        // always recognised even if not added as custom keywords in settings.json.
         const kw           = loadKeywords();
         const _labelMap    = buildLabelMap(cfg);
         const _itemKeys    = new Set((cfg.menuItems || []).map(i => i.key));
-        const _resolvedKey = kw[bodyLow] || kw[bodyRaw]
+        const _resolvedKey = KEYWORDS[bodyLow] || KEYWORDS[bodyRaw]
+            || kw[bodyLow] || kw[bodyRaw]
             || (_itemKeys.has(bodyLow) ? bodyLow : null)
             || (_itemKeys.has(bodyRaw) ? bodyRaw : null)
             || matchLabel(bodyRaw, _labelMap);
@@ -400,21 +403,16 @@ async function handleAutoReply(client, msg) {
 
         // ── Out of Office check (overrides working hours) ─────────────────────
         if (isOOO() && !isBypassCmd) {
-            if (!menuShown.has(from)) {
-                trackBotMessage(await client.sendMessage(from, getOOOMessage()));
-                menuShown.add(from);
-                console.log('[OOO] Message sent to ' + from);
-            }
+            trackBotMessage(await client.sendMessage(from, getOOOMessage()));
+            console.log('[OOO] Message sent to ' + from);
             return true;
         }
         // ─────────────────────────────────────────────────────────────────────
         if (!isOpenNow() && !isBypassCmd) {
-            // Only send closed message once per session to avoid spamming
-            if (!menuShown.has(from)) {
-                trackBotMessage(await client.sendMessage(from, closedMessage()));
-                menuShown.add(from);
-                console.log('[AUTO-REPLY] Closed-hours message sent to ' + from);
-            }
+            // Always tell the customer we're closed so they're never left in silence.
+            trackBotMessage(await client.sendMessage(from, closedMessage()));
+            menuShown.add(from);
+            console.log('[AUTO-REPLY] Closed-hours message sent to ' + from);
             return true;
         }
         // ─────────────────────────────────────────────────────────────────────
