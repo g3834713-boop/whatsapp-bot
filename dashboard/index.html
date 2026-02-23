@@ -311,16 +311,107 @@ textarea{resize:vertical;min-height:60px}
     <!-- Working hours -->
     <div class="card" style="margin-top:20px">
       <div class="card-title">⏰ Working Hours</div>
-      <p class="sub" style="margin-top:6px;margin-bottom:16px">Set opening &amp; closing times for each day. Disabled days are treated as closed.</p>
-      <table style="width:100%;border-collapse:collapse" id="workHoursTable">
-        <thead><tr style="color:#94a3b8;font-size:12px;text-align:left">
-          <th style="padding:6px 10px">Day</th>
-          <th style="padding:6px 10px">Enabled</th>
-          <th style="padding:6px 10px">Opens</th>
-          <th style="padding:6px 10px">Closes</th>
-        </tr></thead>
-        <tbody id="workHoursTbody"></tbody>
-      </table>
+      <p class="sub" style="margin-top:6px;margin-bottom:16px">Control when the bot is "open". Outside these hours it sends the closed message above.</p>
+
+      <!-- Master toggle -->
+      <div style="display:flex;align-items:center;justify-content:space-between;background:#0f172a;border:1px solid #1e2535;border-radius:8px;padding:12px 16px;margin-bottom:16px">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:#e2e8f0">Enable closed-hours replies</div>
+          <div style="font-size:12px;color:#4b5563;margin-top:2px">When OFF the bot replies 24/7 and ignores the schedule below</div>
+        </div>
+        <label class="tog" style="margin:0">
+          <input type="checkbox" id="wh_masterEnabled" checked>
+          <span class="tog-slider"></span>
+        </label>
+      </div>
+
+      <!-- Timezone selector -->
+      <div style="margin-bottom:16px">
+        <label class="lbl">Timezone</label>
+        <select id="wh_timezone">
+          <optgroup label="Africa">
+            <option value="Africa/Abidjan">Africa/Abidjan (GMT+0)</option>
+            <option value="Africa/Cairo">Africa/Cairo (GMT+2)</option>
+            <option value="Africa/Johannesburg">Africa/Johannesburg (GMT+2)</option>
+            <option value="Africa/Lagos">Africa/Lagos (GMT+1)</option>
+            <option value="Africa/Nairobi">Africa/Nairobi (GMT+3)</option>
+          </optgroup>
+          <optgroup label="America">
+            <option value="America/Anchorage">America/Anchorage (GMT-9)</option>
+            <option value="America/Argentina/Buenos_Aires">America/Argentina/Buenos_Aires (GMT-3)</option>
+            <option value="America/Bogota">America/Bogota (GMT-5)</option>
+            <option value="America/Chicago">America/Chicago (GMT-6)</option>
+            <option value="America/Denver">America/Denver (GMT-7)</option>
+            <option value="America/Los_Angeles">America/Los_Angeles (GMT-8)</option>
+            <option value="America/Mexico_City">America/Mexico_City (GMT-6)</option>
+            <option value="America/New_York">America/New_York (GMT-5)</option>
+            <option value="America/Phoenix">America/Phoenix (GMT-7)</option>
+            <option value="America/Santiago">America/Santiago (GMT-4)</option>
+            <option value="America/Sao_Paulo">America/Sao_Paulo (GMT-3)</option>
+            <option value="America/Toronto">America/Toronto (GMT-5)</option>
+            <option value="America/Vancouver">America/Vancouver (GMT-8)</option>
+          </optgroup>
+          <optgroup label="Asia">
+            <option value="Asia/Bangkok">Asia/Bangkok (GMT+7)</option>
+            <option value="Asia/Dhaka">Asia/Dhaka (GMT+6)</option>
+            <option value="Asia/Dubai">Asia/Dubai (GMT+4)</option>
+            <option value="Asia/Hong_Kong">Asia/Hong_Kong (GMT+8)</option>
+            <option value="Asia/Jakarta">Asia/Jakarta (GMT+7)</option>
+            <option value="Asia/Karachi">Asia/Karachi (GMT+5)</option>
+            <option value="Asia/Kolkata">Asia/Kolkata (GMT+5:30)</option>
+            <option value="Asia/Kuala_Lumpur">Asia/Kuala_Lumpur (GMT+8)</option>
+            <option value="Asia/Manila">Asia/Manila (GMT+8)</option>
+            <option value="Asia/Riyadh">Asia/Riyadh (GMT+3)</option>
+            <option value="Asia/Seoul">Asia/Seoul (GMT+9)</option>
+            <option value="Asia/Shanghai">Asia/Shanghai (GMT+8)</option>
+            <option value="Asia/Singapore">Asia/Singapore (GMT+8)</option>
+            <option value="Asia/Taipei">Asia/Taipei (GMT+8)</option>
+            <option value="Asia/Tehran">Asia/Tehran (GMT+3:30)</option>
+            <option value="Asia/Tokyo">Asia/Tokyo (GMT+9)</option>
+          </optgroup>
+          <optgroup label="Atlantic / Pacific">
+            <option value="Atlantic/Reykjavik">Atlantic/Reykjavik (GMT+0)</option>
+            <option value="Pacific/Auckland">Pacific/Auckland (GMT+12/13)</option>
+            <option value="Pacific/Honolulu">Pacific/Honolulu (GMT-10)</option>
+          </optgroup>
+          <optgroup label="Australia">
+            <option value="Australia/Adelaide">Australia/Adelaide (GMT+9:30)</option>
+            <option value="Australia/Brisbane">Australia/Brisbane (GMT+10)</option>
+            <option value="Australia/Perth">Australia/Perth (GMT+8)</option>
+            <option value="Australia/Sydney">Australia/Sydney (GMT+10/11)</option>
+          </optgroup>
+          <optgroup label="Europe">
+            <option value="Europe/Amsterdam">Europe/Amsterdam (GMT+1/2)</option>
+            <option value="Europe/Athens">Europe/Athens (GMT+2/3)</option>
+            <option value="Europe/Berlin">Europe/Berlin (GMT+1/2)</option>
+            <option value="Europe/Istanbul">Europe/Istanbul (GMT+3)</option>
+            <option value="Europe/Kiev">Europe/Kiev (GMT+2/3)</option>
+            <option value="Europe/Lisbon">Europe/Lisbon (GMT+0/1)</option>
+            <option value="Europe/London">Europe/London (GMT+0/1)</option>
+            <option value="Europe/Madrid">Europe/Madrid (GMT+1/2)</option>
+            <option value="Europe/Moscow">Europe/Moscow (GMT+3)</option>
+            <option value="Europe/Paris">Europe/Paris (GMT+1/2)</option>
+            <option value="Europe/Rome">Europe/Rome (GMT+1/2)</option>
+            <option value="Europe/Warsaw">Europe/Warsaw (GMT+1/2)</option>
+          </optgroup>
+          <optgroup label="UTC">
+            <option value="UTC">UTC (GMT+0)</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div id="workHoursSchedule">
+        <div style="font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px">Daily Schedule</div>
+        <table style="width:100%;border-collapse:collapse" id="workHoursTable">
+          <thead><tr style="color:#94a3b8;font-size:12px;text-align:left">
+            <th style="padding:6px 10px">Day</th>
+            <th style="padding:6px 10px">Open</th>
+            <th style="padding:6px 10px">Opens at</th>
+            <th style="padding:6px 10px">Closes at</th>
+          </tr></thead>
+          <tbody id="workHoursTbody"></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="flex-end" style="margin-top:16px">
@@ -1133,6 +1224,12 @@ async function loadMessages() {
     const el = document.getElementById('msg_' + f);
     if (el) el.value = data[f] || '';
   });
+  // closed-hours master toggle (default ON)
+  const masterEl = document.getElementById('wh_masterEnabled');
+  if (masterEl) masterEl.checked = data.closedHoursEnabled !== false;
+  // timezone
+  const tzEl = document.getElementById('wh_timezone');
+  if (tzEl && data.timezone) tzEl.value = data.timezone;
   renderWorkHours(data.workHours);
 }
 
@@ -1187,6 +1284,8 @@ async function saveMessages() {
     };
   }
   payload.workHours = workHours;
+  payload.closedHoursEnabled = document.getElementById('wh_masterEnabled')?.checked ?? true;
+  payload.timezone = document.getElementById('wh_timezone')?.value || 'UTC';
   const r = await fetch('/api/messages', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

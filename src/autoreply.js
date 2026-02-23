@@ -136,10 +136,10 @@ loadAgentMode(); // run once at startup
 // Loaded dynamically from config/messages.json so they can be edited in dashboard.
 
 // ── Timezone-aware time helpers ───────────────────────────────────────────────
-// Railway servers run UTC. Set BOT_TIMEZONE (e.g. "Africa/Johannesburg") so
-// working-hours checks use your local time instead of the server clock.
+// Railway servers run UTC. BOT_TIMEZONE env var sets the default, but the
+// dashboard can override it via messages.json → timezone field.
 function _localParts() {
-    const tz  = process.env.BOT_TIMEZONE || 'UTC';
+    const tz  = loadMessages().timezone || process.env.BOT_TIMEZONE || 'UTC';
     const now  = new Date();
     // Intl gives us locale strings like "Fri, 21 Feb 2026, 10:35:00"
     const fmt  = new Intl.DateTimeFormat('en-US', {
@@ -154,8 +154,11 @@ function _localParts() {
 }
 
 function isOpenNow() {
+    const msgs = loadMessages();
+    // If closed-hours checking is disabled, bot replies 24/7
+    if (msgs.closedHoursEnabled === false) return true;
     const { day, hour } = _localParts();
-    const wh   = loadMessages().workHours;
+    const wh   = msgs.workHours;
     const slot = wh[String(day)];
     if (!slot || slot.enabled === false) return false;
     return hour >= slot.open && hour < slot.close;
