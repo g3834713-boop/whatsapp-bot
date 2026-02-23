@@ -347,24 +347,8 @@ async function handleAutoReply(client, msg) {
 
         if (!bodyRaw) return false;
 
-        // ── Quick replies: exact-match or contains text triggers ──────────────
-        const quickRules = loadQuickReplies();
-        for (const rule of quickRules) {
-            if (!rule.trigger || !rule.response) continue;
-            const matchType  = rule.matchType || 'contains';
-            const triggerLow = rule.trigger.toLowerCase().trim();
-            const hit = matchType === 'exact'
-                ? bodyLow === triggerLow
-                : bodyLow.includes(triggerLow);
-            if (hit) {
-                trackBotMessage(await client.sendMessage(from, rule.response));
-                console.log(`[QUICK-REPLY] Rule "${rule.trigger}" matched for ${from}`);
-                return true;
-            }
-        }
-        // ─────────────────────────────────────────────────────────────────────
-
-        // Resolve the menu key early so we can decide whether to bypass hours checks.
+        // Resolve the menu key early so we can decide whether to bypass hours checks
+        // and whether to skip quick replies (menu commands always take priority).
         const kw           = loadKeywords();
         const _labelMap    = buildLabelMap(cfg);
         const _itemKeys    = new Set((cfg.menuItems || []).map(i => i.key));
@@ -373,6 +357,26 @@ async function handleAutoReply(client, msg) {
             || (_itemKeys.has(bodyRaw) ? bodyRaw : null)
             || matchLabel(bodyRaw, _labelMap);
         const isBypassCmd  = !!_resolvedKey;
+
+        // ── Quick replies: only run when the message is NOT a menu command ─────
+        // This ensures 00, 0, 1-9, hi, hello, etc. always reach the menu handler.
+        if (!isBypassCmd && !submenuContext.has(from)) {
+            const quickRules = loadQuickReplies();
+            for (const rule of quickRules) {
+                if (!rule.trigger || !rule.response) continue;
+                const matchType  = rule.matchType || 'contains';
+                const triggerLow = rule.trigger.toLowerCase().trim();
+                const hit = matchType === 'exact'
+                    ? bodyLow === triggerLow
+                    : bodyLow.includes(triggerLow);
+                if (hit) {
+                    trackBotMessage(await client.sendMessage(from, rule.response));
+                    console.log(`[QUICK-REPLY] Rule "${rule.trigger}" matched for ${from}`);
+                    return true;
+                }
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         // ── Out of Office check (overrides working hours) ─────────────────────
         if (isOOO() && !isBypassCmd) {
