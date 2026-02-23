@@ -313,21 +313,46 @@ async function handleAutoReply(client, msg) {
         } catch (e) { /* non-fatal */ }
         // ─────────────────────────────────────────────────────────────────────
 
+        const bodyRaw = (msg.body || '').trim();
+        const bodyLow = bodyRaw.toLowerCase();
+
+        if (!bodyRaw) return false;
+
+        // ── 00 = absolute menu override — beats EVERYTHING including agent mode ─
+        if (bodyRaw === '00' || bodyLow === '00') {
+            agentMode.delete(from);
+            saveAgentMode();
+            removeFromQueue(from);
+            submenuContext.delete(from);
+            menuShown.delete(from);
+            if (newCustomer && !newCustomer.welcomeSent) {
+                await sendWelcome(client, from, newCustomer, cfg);
+            }
+            trackBotMessage(await client.sendMessage(from, buildMenuText(cfg)));
+            menuShown.add(from);
+            console.log('[AUTO-REPLY] 00 → Menu (override) sent to ' + from);
+            return true;
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         // ── Agent mode: stay silent unless user sends a command, or timeout expires ──
         if (agentMode.has(from)) {
-            const bodyRawCheck = (msg.body || '').trim();
-            const bodyLowCheck = bodyRawCheck.toLowerCase();
             const elapsed = Date.now() - agentMode.get(from);
-            const kw = loadKeywords();
+            const kw      = loadKeywords();
+
+            // isCmd = true if the message matches any bot keyword (hardcoded OR custom)
+            const isCmd = KEYWORDS[bodyLow] || KEYWORDS[bodyRaw]
+                || kw[bodyLow] || kw[bodyRaw]
+                || matchLabel(bodyRaw, buildLabelMap(cfg));
 
             if (elapsed >= getAgentTimeoutMs()) {
-                // 8 hours of inactivity — release
+                // Timeout expired — release
                 agentMode.delete(from);
                 saveAgentMode();
                 removeFromQueue(from);
                 console.log('[AGENT] Expired (inactivity) for ' + from);
                 // fall through to normal handling
-            } else if (kw[bodyLowCheck] || kw[bodyRawCheck] || matchLabel(bodyRawCheck, buildLabelMap(cfg))) {
+            } else if (isCmd) {
                 // User deliberately sent a bot command — release agent mode
                 agentMode.delete(from);
                 saveAgentMode();
@@ -341,25 +366,6 @@ async function handleAutoReply(client, msg) {
             }
         }
         // ─────────────────────────────────────────────────────────────────
-
-        const bodyRaw = (msg.body || '').trim();
-        const bodyLow = bodyRaw.toLowerCase();
-
-        if (!bodyRaw) return false;
-
-        // ── 00 = absolute menu override — beats everything ────────────────────
-        if (bodyRaw === '00' || bodyLow === '00') {
-            submenuContext.delete(from);
-            menuShown.delete(from);
-            if (newCustomer && !newCustomer.welcomeSent) {
-                await sendWelcome(client, from, newCustomer, cfg);
-            }
-            trackBotMessage(await client.sendMessage(from, buildMenuText(cfg)));
-            menuShown.add(from);
-            console.log('[AUTO-REPLY] 00 → Menu (override) sent to ' + from);
-            return true;
-        }
-        // ─────────────────────────────────────────────────────────────────────
 
         // Resolve the menu key early so we can decide whether to bypass hours checks
         // and whether to skip quick replies (menu commands always take priority).
