@@ -347,6 +347,20 @@ async function handleAutoReply(client, msg) {
 
         if (!bodyRaw) return false;
 
+        // ── 00 = absolute menu override — beats everything ────────────────────
+        if (bodyRaw === '00' || bodyLow === '00') {
+            submenuContext.delete(from);
+            menuShown.delete(from);
+            if (newCustomer && !newCustomer.welcomeSent) {
+                await sendWelcome(client, from, newCustomer, cfg);
+            }
+            trackBotMessage(await client.sendMessage(from, buildMenuText(cfg)));
+            menuShown.add(from);
+            console.log('[AUTO-REPLY] 00 → Menu (override) sent to ' + from);
+            return true;
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         // Resolve the menu key early so we can decide whether to bypass hours checks
         // and whether to skip quick replies (menu commands always take priority).
         const kw           = loadKeywords();
