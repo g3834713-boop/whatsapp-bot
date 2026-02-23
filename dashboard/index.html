@@ -148,6 +148,7 @@ textarea{resize:vertical;min-height:60px}
     <button class="nav-btn" onclick="nav('backup',this)"><span class="ic">🗄️</span>Backup &amp; Restore</button>
     <button class="nav-btn" onclick="nav('productfeed',this)"><span class="ic">🛍️</span>Product Feed</button>
     <button class="nav-btn" onclick="nav('campaigns',this)"><span class="ic">📣</span>Campaigns</button>
+    <button class="nav-btn" onclick="nav('quickreplies',this)"><span class="ic">💬</span>Quick Replies</button>
     <button class="nav-btn" id="navQueue" onclick="nav('queue',this)"><span class="ic">🔔</span>Agent Queue <span id="queueBadge" style="display:none;background:#ef4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:4px;font-weight:700">0</span></button>
   </nav>
   <div class="status-pill disconnected" id="statusPill"> Disconnected</div>
@@ -247,6 +248,26 @@ textarea{resize:vertical;min-height:60px}
       </div>
       <div class="flex-end">
         <button class="btn btn-primary" onclick="saveAutoReply()"> Save Auto-Reply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QUICK REPLIES -->
+  <div class="page" id="page-quickreplies">
+    <h2>Quick Replies</h2>
+    <p class="sub">When a client sends a specific phrase the bot instantly replies with your custom response. Rules are checked before the main menu.</p>
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="card-title" style="margin:0">💬 Trigger → Response Rules</div>
+        <button class="btn btn-add btn-sm" onclick="addQRRule()">➕ Add Rule</button>
+      </div>
+      <p style="font-size:12px;color:#4b5563;margin-bottom:14px">
+        <b style="color:#94a3b8">Exact match</b> — bot only replies when the client's entire message equals the trigger (case-insensitive).<br>
+        <b style="color:#94a3b8">Contains</b> — bot replies whenever the trigger phrase appears anywhere in the message.
+      </p>
+      <div id="qrRulesList"></div>
+      <div class="flex-end" style="margin-top:18px">
+        <button class="btn btn-primary" onclick="saveQuickReplies()">💾 Save Quick Replies</button>
       </div>
     </div>
   </div>
@@ -761,6 +782,7 @@ function nav(page, btn) {
   if (page==='autoreply') loadAutoReply();
   if (page==='queue') loadQueue();
   if (page==='campaigns') loadCampaigns();
+  if (page==='quickreplies') loadQuickReplies();
   if (page==='messages') loadMessages();
   if (page==='settings') loadSettings();
   if (page==='backup')   resetRestoreUI();
@@ -1830,6 +1852,71 @@ setInterval(() => {
 }, 30000);
 
 // ── initDashboard: connect socket + load initial state ──────────────────────
+// ── Quick Replies ─────────────────────────────────────────────────────────────
+let qrRules = [];
+
+async function loadQuickReplies() {
+  try { qrRules = await fetch('/api/quickreplies').then(r => r.json()); }
+  catch(e) { qrRules = []; }
+  renderQRRules();
+}
+
+function renderQRRules() {
+  const list = document.getElementById('qrRulesList');
+  if (!list) return;
+  if (!qrRules.length) {
+    list.innerHTML = '<p style="font-size:13px;color:#4b5563;text-align:center;padding:20px 0">No rules yet. Click <b>➕ Add Rule</b> to get started.</p>';
+    return;
+  }
+  list.innerHTML = qrRules.map((r, i) => `
+    <div class="card" style="margin-bottom:10px;padding:14px" id="qrRule${i}">
+      <div class="row" style="align-items:flex-start;gap:10px">
+        <div class="grow">
+          <label class="lbl" style="margin-top:0">Trigger phrase (client sends)</label>
+          <input type="text" value="${_esc(r.trigger)}" placeholder="e.g. price list"
+                 oninput="qrRules[${i}].trigger=this.value" style="margin-bottom:8px">
+          <label class="lbl">Bot response</label>
+          <textarea rows="3" placeholder="e.g. Our prices start from $10..."
+                    oninput="qrRules[${i}].response=this.value">${_esc(r.response)}</textarea>
+          <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;color:#64748b">Match type:</span>
+            <select onchange="qrRules[${i}].matchType=this.value" style="width:auto;padding:4px 8px;font-size:12px">
+              <option value="contains"${(r.matchType||'contains')==='contains' ? 'selected':''}>Contains</option>
+              <option value="exact"   ${r.matchType==='exact' ? 'selected':''}>Exact match</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-danger btn-sm" style="margin-top:22px;flex-shrink:0" onclick="deleteQRRule(${i})">🗑️</button>
+      </div>
+    </div>`).join('');
+}
+
+function _esc(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function addQRRule() {
+  qrRules.push({ trigger: '', response: '', matchType: 'contains' });
+  renderQRRules();
+  // scroll last card into view
+  const list = document.getElementById('qrRulesList');
+  if (list) list.lastElementChild && list.lastElementChild.scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+function deleteQRRule(i) {
+  qrRules.splice(i, 1);
+  renderQRRules();
+}
+
+async function saveQuickReplies() {
+  const r = await fetch('/api/quickreplies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(qrRules),
+  }).then(r => r.json());
+  toast(r.ok ? '✅ Quick replies saved!' : '❌ ' + r.error, r.ok ? 'ok' : 'err');
+}
+
 function initDashboard() {
   socket = io({ auth: { token: _tok } });
   socket.on('status', s => { status = s; setStatus(s); renderQR(s); if (s === 'connected') loadChats(); });

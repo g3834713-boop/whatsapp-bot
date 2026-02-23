@@ -10,10 +10,16 @@ const { recordCustomer, touchCustomer, markWelcomeSent } = require('./customers'
 const { addToQueue, removeFromQueue } = require('./dashboard');
 const { isOOO, getOOOMessage } = require('./ooo');
 
-const CONFIG_PATH     = path.join(__dirname, '..', 'config', 'autoreply.json');
-const MESSAGES_PATH   = path.join(__dirname, '..', 'config', 'messages.json');
-const AGENT_MODE_FILE = path.join(__dirname, '..', 'config', 'agentmode.json');
-const SETTINGS_PATH   = path.join(__dirname, '..', 'config', 'settings.json');
+const CONFIG_PATH        = path.join(__dirname, '..', 'config', 'autoreply.json');
+const MESSAGES_PATH      = path.join(__dirname, '..', 'config', 'messages.json');
+const AGENT_MODE_FILE    = path.join(__dirname, '..', 'config', 'agentmode.json');
+const SETTINGS_PATH      = path.join(__dirname, '..', 'config', 'settings.json');
+const QUICKREPLIES_PATH  = path.join(__dirname, '..', 'config', 'quickreplies.json');
+
+function loadQuickReplies() {
+    try { return JSON.parse(fs.readFileSync(QUICKREPLIES_PATH, 'utf8')); }
+    catch (e) { return []; }
+}
 
 const SETTINGS_DEFAULTS = {
     agentTimeoutHours:    8,
@@ -340,6 +346,23 @@ async function handleAutoReply(client, msg) {
         const bodyLow = bodyRaw.toLowerCase();
 
         if (!bodyRaw) return false;
+
+        // ── Quick replies: exact-match or contains text triggers ──────────────
+        const quickRules = loadQuickReplies();
+        for (const rule of quickRules) {
+            if (!rule.trigger || !rule.response) continue;
+            const matchType  = rule.matchType || 'contains';
+            const triggerLow = rule.trigger.toLowerCase().trim();
+            const hit = matchType === 'exact'
+                ? bodyLow === triggerLow
+                : bodyLow.includes(triggerLow);
+            if (hit) {
+                trackBotMessage(await client.sendMessage(from, rule.response));
+                console.log(`[QUICK-REPLY] Rule "${rule.trigger}" matched for ${from}`);
+                return true;
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         // Resolve the menu key early so we can decide whether to bypass hours checks.
         const kw           = loadKeywords();

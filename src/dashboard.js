@@ -300,6 +300,30 @@ app.post('/api/reengagement', (req, res) => {
     res.json({ ok: true });
 });
 
+// ── API: quick replies ───────────────────────────────────────────────────────
+const QUICKREPLIES_PATH = path.join(__dirname, '..', 'config', 'quickreplies.json');
+
+app.get('/api/quickreplies', (req, res) => {
+    try { res.json(JSON.parse(fs.readFileSync(QUICKREPLIES_PATH, 'utf8'))); }
+    catch (_) { res.json([]); }
+});
+
+app.post('/api/quickreplies', (req, res) => {
+    try {
+        const rules = req.body;
+        if (!Array.isArray(rules)) return res.json({ ok: false, error: 'Body must be an array.' });
+        for (let i = 0; i < rules.length; i++) {
+            const r = rules[i];
+            if (!r.trigger || !String(r.trigger).trim())
+                return res.json({ ok: false, error: `Rule #${i + 1}: trigger must not be empty.` });
+            if (!r.response || !String(r.response).trim())
+                return res.json({ ok: false, error: `Rule #${i + 1} ("${r.trigger}"): response must not be empty.` });
+        }
+        fs.writeFileSync(QUICKREPLIES_PATH, JSON.stringify(rules, null, 2));
+        res.json({ ok: true });
+    } catch (e) { res.json({ ok: false, error: e.message }); }
+});
+
 // ── API: autoreply config ─────────────────────────────────────────────────────
 // Convert legacy { responses:{} } format to { menuItems:[] } on the fly
 function _normalizeAutoReply(raw) {
