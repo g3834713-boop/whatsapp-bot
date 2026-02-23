@@ -6,7 +6,7 @@
 const fs   = require('fs');
 const path = require('path');
 const { MessageMedia } = require('whatsapp-web.js');
-const { recordCustomer, touchCustomer, markWelcomeSent } = require('./customers');
+const { recordCustomer, touchCustomer, markWelcomeSent, isKnownContact } = require('./customers');
 const { addToQueue, removeFromQueue } = require('./dashboard');
 const { isOOO, getOOOMessage } = require('./ooo');
 
@@ -550,22 +550,37 @@ async function handleAutoReply(client, msg) {
  * - If the message ID was sent by the bot automatically → ignore it.
  * - Otherwise → you are the agent. Turn ON agent mode (or reset the 8hr
  *   timer if already on) so the bot stays silent for that conversation.
+ *
+ * Uses setImmediate so that trackBotMessage (called from the Promise chain
+ * inside handleAutoReply) always has a chance to register the ID first,
+ * preventing a race condition where bot auto-replies accidentally activate
+ * agent mode and silence the bot for that contact.
  */
 function agentSentMessage(msgId, contactId) {
-    // Ignore events fired while the bot is in the middle of auto-replying
-    // (message_create races ahead of sendMessage's resolved promise)
+    // Fast-path: bot is mid-reply right now — definitely a bot message.
     if (botReplying.has(contactId)) return false;
 
-    // Ignore bot's own auto-sent messages
-    if (msgId && botSentIds.has(msgId)) {
-        botSentIds.delete(msgId); // consume
-        return false;
-    }
+    // Defer the rest so any pending trackBotMessage microtasks run first.
+    setImmediate(() => {
+        // Re-check after deferral
+        if (botReplying.has(contactId)) return;
 
-    // Agent manually sent a message — activate / refresh agent mode
-    agentMode.set(contactId, Date.now());
-    saveAgentMode();
-    console.log('[AGENT] ON / timer reset (agent messaged) for ' + contactId);
+        // Ignore bot's own auto-sent messages (registered by trackBotMessage)
+        if (msgId && botSentIds.has(msgId)) {
+            botSentIds.delete(msgId); // consume
+            return;
+        }
+
+        // Only activate agent mode for contacts who have actually messaged the
+        // bot before. This prevents the owner's personal WhatsApp messages to
+        // unrelated contacts from accidentally silencing the bot for them.
+        if (!isKnownContact(contactId)) return;
+
+        // Agent manually sent a message — activate / refresh agent mode
+        agentMode.set(contactId, Date.now());
+        saveAgentMode();
+        console.log('[AGENT] ON / timer reset (agent messaged) for ' + contactId);
+    });
     return true;
 }
 

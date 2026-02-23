@@ -83,4 +83,12 @@ function getAllCustomers() {
     return Object.values(load());
 }
 
-module.exports = { recordCustomer, touchCustomer, getAllCustomers, markWelcomeSent };
+/**
+ * Returns true if this contactId has ever messaged the bot.
+ */
+function isKnownContact(contactId) {
+    const data = load();
+    return !!data[contactId];
+}
+
+module.exports = { recordCustomer, touchCustomer, getAllCustomers, markWelcomeSent, isKnownContact };
