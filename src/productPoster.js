@@ -9,9 +9,10 @@
  * Posted log: config/productfeed_posted.json (tracks which IDs already sent)
  */
 
-const fs   = require('fs');
-const path = require('path');
-const cron = require('node-cron');
+const fs    = require('fs');
+const path  = require('path');
+const cron  = require('node-cron');
+const axios = require('axios');
 const { MessageMedia } = require('whatsapp-web.js');
 const { getAllCachedProducts } = require('./productScraper');
 
@@ -194,20 +195,25 @@ async function runDailyFeed(client, emitFn) {
     for (let i = 0; i < toPost.length; i++) {
         const product = toPost[i];
         try {
+            // Fetch image server-side with axios and pass base64 directly to WhatsApp.
+            // Using MessageMedia.fromUrl() makes Puppeteer download the image internally
+            // which often produces 'Waiting for this message…' that never resolves.
             let media = null;
             if (product.imageUrl) {
                 try {
-                    media = await MessageMedia.fromUrl(product.imageUrl, {
-                        unsafeMime: true,
-                        reqOptions: {
-                            headers: {
-                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                                'Referer':    'https://jd-fx-imports.vercel.app/',
-                            },
+                    const imgRes = await axios.get(product.imageUrl, {
+                        responseType: 'arraybuffer',
+                        timeout:      15000,
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                            'Referer':    'https://jd-fx-imports.vercel.app/',
                         },
                     });
+                    const mime   = imgRes.headers['content-type'] || 'image/jpeg';
+                    const b64    = Buffer.from(imgRes.data).toString('base64');
+                    media = new MessageMedia(mime.split(';')[0].trim(), b64);
                 } catch (imgErr) {
-                    console.warn(`[FEED] Image load failed: ${imgErr.message} — posting text only`);
+                    console.warn(`[FEED] Image fetch failed: ${imgErr.message} — posting text only`);
                 }
             }
 
