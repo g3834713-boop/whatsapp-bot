@@ -21,9 +21,14 @@ const CLIENT_ID = process.env.CLIENT_ID || 'whatsapp-bot';
 const { handleCommand } = require('./commands');
 const { startScheduler } = require('./scheduler');
 const { handleAutoReply, agentSentMessage, releaseContact } = require('./autoreply');
-const { startDashboard, setBotClient, emitQR, emitReady, emitDisconnected, setReleaseCallback, emitEvent } = require('./dashboard');
+const { startDashboard, setBotClient, emitQR, emitAuthenticated, emitReady, emitDisconnected, setReleaseCallback, setSafeInitialize, setUserDisconnectHook, emitEvent } = require('./dashboard');
 const { startCampaigns } = require('./campaigns');
 const { startProductFeedScheduler } = require('./productPoster');
+
+// ── User-initiated disconnect flag ─────────────────────────────────────────────
+// When the dashboard user clicks "Disconnect", we set this so the watchdog
+// and disconnected event don't trigger an automatic reconnect.
+let _suppressReconnect = false;
 
 // ── Simple concurrency-limited message queue ──────────────────────────────────
 // Prevents overwhelming the Puppeteer/WhatsApp bridge when many clients
@@ -142,6 +147,7 @@ function attachListeners(client) {
 
     client.on('authenticated', () => {
         console.log('[BOT] Authenticated successfully!');
+        emitAuthenticated();
     });
 
     client.on('auth_failure', (msg) => {
@@ -208,14 +214,18 @@ function attachListeners(client) {
     client.on('disconnected', (reason) => {
         console.log('[BOT] Disconnected:', reason);
         emitDisconnected();
+        if (_suppressReconnect) {
+            console.log('[BOT] User-initiated disconnect — not auto-reconnecting.');
+            return;
+        }
         console.log('[BOT] Will attempt reconnect in 10s...');
         setTimeout(() => safeInitialize(), 10000);
     });
 
     client.on('change_state', (state) => {
         console.log('[BOT] State changed:', state);
-        // If WhatsApp signals it's no longer open/connected, trigger reconnect
         if (state === 'CONFLICT' || state === 'UNLAUNCHED') {
+            if (_suppressReconnect) return;
             console.warn(`[BOT] Bad state "${state}" — reconnecting in 5s...`);
             emitDisconnected();
             setTimeout(() => safeInitialize(), 5000);
@@ -235,12 +245,14 @@ function attachListeners(client) {
             }
             const state = await client.getState();
             if (!state || state !== 'CONNECTED') {
+                if (_suppressReconnect) { clearInterval(watchdog); return; }
                 console.warn(`[WATCHDOG] State is "${state}" — reconnecting...`);
                 clearInterval(watchdog);
                 emitDisconnected();
                 safeInitialize();
             }
         } catch (err) {
+            if (_suppressReconnect) { clearInterval(watchdog); return; }
             console.warn('[WATCHDOG] Health check failed:', err.message, '— reconnecting...');
             clearInterval(watchdog);
             emitDisconnected();
@@ -264,6 +276,7 @@ process.on('unhandledRejection', (reason) => {
         msg.includes('Navigation') ||
         msg.includes('detached Frame');
     if (isPuppeteer) {
+        if (_suppressReconnect) return;
         console.warn('[BOT] Puppeteer crash detected. Reconnecting in 10s...');
         emitDisconnected();
         setTimeout(() => safeInitialize(), 10000);
@@ -278,5 +291,15 @@ setInterval(() => {}, 60 * 60 * 1000);
 
 startDashboard(3000);
 setReleaseCallback(releaseContact); // Allow dashboard to release agent mode
+
+// Wire up connect/disconnect callbacks for the dashboard Connect/Disconnect buttons
+setSafeInitialize(() => {
+    _suppressReconnect = false;
+    safeInitialize();
+});
+setUserDisconnectHook((suppress) => {
+    _suppressReconnect = suppress;
+    console.log('[BOT] Suppress auto-reconnect:', suppress);
+});
 
 safeInitialize();

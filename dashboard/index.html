@@ -748,24 +748,73 @@ let chatsData = { groups: [], channels: [] };
 
 function setStatus(s) {
   const p = document.getElementById('statusPill');
-  p.className = 'status-pill ' + s;
-  p.textContent = s==='connected'?' Connected': s==='qr'?' Scan QR Code':' Disconnected';
+  if (s === 'connected') {
+    p.className = 'status-pill connected';
+    p.textContent = '\u{1F7E2} Connected';
+  } else if (s === 'qr') {
+    p.className = 'status-pill qr';
+    p.textContent = '\u{1F4F7} Scan QR Code';
+  } else if (s === 'connecting') {
+    p.className = 'status-pill qr';
+    p.textContent = '\u23F3 Connecting...';
+  } else if (s === 'authenticated') {
+    p.className = 'status-pill qr';
+    p.textContent = '\u{1F510} Authenticating...';
+  } else {
+    p.className = 'status-pill disconnected';
+    p.textContent = '\u{1F534} Disconnected';
+  }
   const btnConn = document.getElementById('btnConnect');
   const btnDisc = document.getElementById('btnDisconnect');
   if (btnConn && btnDisc) {
-    btnConn.style.display  = (s === 'disconnected') ? '' : 'none';
-    btnDisc.style.display  = (s === 'connected' || s === 'qr') ? '' : 'none';
+    // Show Connect only when fully disconnected
+    btnConn.style.display = (s === 'disconnected') ? '' : 'none';
+    // Show Disconnect when live OR when a connection attempt is in progress (allows cancel)
+    btnDisc.style.display = (s === 'connected' || s === 'qr' || s === 'connecting' || s === 'authenticated') ? '' : 'none';
+    // Reset button labels
+    btnConn.disabled = false; btnConn.textContent = '\u{1F517} Connect WhatsApp';
+    if (s !== 'connected') {
+      btnDisc.textContent = s === 'disconnected' ? '\u26D4 Disconnect WhatsApp' : '\u274C Cancel';
+    } else {
+      btnDisc.textContent = '\u26D4 Disconnect WhatsApp';
+    }
   }
 }
 
 function renderQR(s, url) {
   const a = document.getElementById('qrArea');
-  if (s==='connected') {
-    a.innerHTML = '<div class="qr-box"><div class="big-icon"></div><div class="big-text green">WhatsApp Connected!</div><p style="color:#4b5563;font-size:13px;margin-top:10px">Bot is online. Go to Groups & Channels to add schedules.</p></div>';
-  } else if (s==='qr' && url) {
-    a.innerHTML = '<div class="qr-box"><img src="'+url+'" alt="QR"><p class="hint">Open WhatsApp  Linked Devices  Link a Device<br>then point your camera at this code</p></div>';
-  } else if (s==='disconnected') {
-    a.innerHTML = '<div class="qr-box"><div class="big-icon"></div><div class="big-text red">Bot Disconnected</div><p style="color:#4b5563;font-size:13px;margin-top:10px">Start the bot server to see the QR code.</p></div>';
+  if (!a) return;
+  if (s === 'connected') {
+    a.innerHTML = `<div class="qr-box">
+      <div style="font-size:72px;text-align:center;padding:8px 0">\u2705</div>
+      <div class="big-text green" style="font-size:22px;margin-top:4px">Connected Successfully!</div>
+      <p style="color:#25d366;font-size:13px;margin-top:10px;text-align:center">Bot is live and responding to all messages.</p>
+      <p style="color:#4b5563;font-size:12px;margin-top:6px;text-align:center">Click \u26D4 Disconnect WhatsApp below to end the session.</p>
+    </div>`;
+  } else if (s === 'qr' && url) {
+    a.innerHTML = `<div class="qr-box">
+      <img src="${url}" alt="QR Code">
+      <p class="hint">Open WhatsApp \u2192 <b>Linked Devices</b> \u2192 <b>Link a Device</b><br>then point your camera at this code</p>
+      <p style="color:#64748b;font-size:12px;margin-top:8px">\u23F1 QR code expires in ~60 seconds \u2014 a new one will appear automatically</p>
+    </div>`;
+  } else if (s === 'connecting') {
+    a.innerHTML = `<div class="qr-box">
+      <div class="spinner" style="width:40px;height:40px;border-width:4px"></div>
+      <div style="color:#f59e0b;font-size:15px;font-weight:600;margin-top:16px">Starting connection...</div>
+      <p style="color:#4b5563;font-size:12px;margin-top:8px">QR code will appear here in a moment</p>
+    </div>`;
+  } else if (s === 'authenticated') {
+    a.innerHTML = `<div class="qr-box">
+      <div class="spinner" style="width:40px;height:40px;border-width:4px"></div>
+      <div style="color:#25d366;font-size:15px;font-weight:600;margin-top:16px">\u{1F510} Authenticated! Setting up bot...</div>
+      <p style="color:#4b5563;font-size:12px;margin-top:8px">Almost ready, please wait</p>
+    </div>`;
+  } else if (s === 'disconnected') {
+    a.innerHTML = `<div class="qr-box">
+      <div class="big-icon">\u{1F534}</div>
+      <div class="big-text red">Bot Disconnected</div>
+      <p style="color:#4b5563;font-size:13px;margin-top:10px;text-align:center">Click <b>\u{1F517} Connect WhatsApp</b> below to get started.</p>
+    </div>`;
   } else {
     a.innerHTML = '<div class="spinner"></div>';
   }
@@ -1919,8 +1968,13 @@ async function saveQuickReplies() {
 
 function initDashboard() {
   socket = io({ auth: { token: _tok } });
-  socket.on('status', s => { status = s; setStatus(s); renderQR(s); if (s === 'connected') loadChats(); });
-  socket.on('qr', url => renderQR('qr', url));
+  socket.on('status', s => {
+    status = s;
+    setStatus(s);
+    renderQR(s);
+    if (s === 'connected') loadChats();
+  });
+  socket.on('qr', url => { renderQR('qr', url); });
   socket.on('agent-queue', items => { queueData = items; renderQueue(); updateQueueBadge(); });
   socket.on('connect_error', e => {
     if (e.message === 'Unauthorized') {

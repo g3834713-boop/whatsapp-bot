@@ -68,8 +68,15 @@ app.post('/api/login', (req, res) => {
 
 // ── State ────────────────────────────────────────────────────────────────────
 let botClient  = null;
-let botStatus  = 'disconnected'; // 'disconnected' | 'qr' | 'connected'
+let botStatus  = 'disconnected'; // 'disconnected' | 'connecting' | 'qr' | 'authenticated' | 'connected'
 let lastQRData = null; // base64 PNG data URL
+
+// ── Connect / disconnect wiring (set from index.js after init) ────────────────
+let _safeInitialize      = null; // () => void  — triggers a new connection
+let _userDisconnectHook  = null; // (suppress: bool) => void — suppresses auto-reconnect
+
+function setSafeInitialize(fn)     { _safeInitialize     = fn; }
+function setUserDisconnectHook(fn) { _userDisconnectHook = fn; }
 
 // ── Agent Queue ───────────────────────────────────────────────────────────────
 // Tracks contacts waiting for a human agent: contactId → { name, time }
@@ -111,6 +118,12 @@ async function emitQR(qrString) {
     }
 }
 
+function emitAuthenticated() {
+    lastQRData = null;
+    botStatus  = 'authenticated';
+    io.emit('status', 'authenticated');
+}
+
 function emitReady() {
     lastQRData = null;
     botStatus  = 'connected';
@@ -119,6 +132,7 @@ function emitReady() {
 
 function emitDisconnected() {
     botStatus = 'disconnected';
+    lastQRData = null;
     io.emit('status', 'disconnected');
 }
 
@@ -242,29 +256,35 @@ app.delete('/api/schedules/:index', (req, res) => {
 
 // ── API: connect / disconnect ────────────────────────────────────────────────
 app.post('/api/connect', async (req, res) => {
-    if (!botClient) return res.json({ ok: false, error: 'No client instance available' });
-    if (botStatus === 'connected') return res.json({ ok: false, error: 'Already connected' });
-    try {
-        botStatus = 'connecting';
-        io.emit('status', 'connecting');
-        await botClient.initialize();
-        res.json({ ok: true });
-    } catch (e) {
-        console.error('[DASHBOARD] Connect error:', e.message);
-        res.json({ ok: false, error: e.message });
+    // Refuse if already in progress or live
+    if (botStatus === 'connected' || botStatus === 'qr' || botStatus === 'connecting' || botStatus === 'authenticated') {
+        return res.json({ ok: false, error: 'Already ' + botStatus });
     }
+    if (!_safeInitialize) return res.json({ ok: false, error: 'Bot initializer not available — restart the server' });
+    // Un-suppress auto-reconnect (user is intentionally connecting)
+    if (_userDisconnectHook) _userDisconnectHook(false);
+    // Signal UI immediately
+    botStatus = 'connecting';
+    io.emit('status', 'connecting');
+    // Kick off connection asynchronously — QR/ready will arrive via socket events
+    _safeInitialize();
+    res.json({ ok: true });
 });
 
 app.post('/api/disconnect', async (req, res) => {
     if (!botClient) return res.json({ ok: false, error: 'No client instance available' });
     if (botStatus === 'disconnected') return res.json({ ok: false, error: 'Already disconnected' });
     try {
+        // Tell index.js NOT to auto-reconnect — this is a deliberate user action
+        if (_userDisconnectHook) _userDisconnectHook(true);
         await botClient.destroy();
         botStatus  = 'disconnected';
         lastQRData = null;
         io.emit('status', 'disconnected');
         res.json({ ok: true });
     } catch (e) {
+        // Revert suppress flag on error so watchdog can still recover
+        if (_userDisconnectHook) _userDisconnectHook(false);
         console.error('[DASHBOARD] Disconnect error:', e.message);
         res.json({ ok: false, error: e.message });
     }
@@ -640,4 +660,4 @@ function startDashboard(port = 3000) {
 
 function emitEvent(event, data) { io.emit(event, data); }
 
-module.exports = { startDashboard, setBotClient, emitQR, emitReady, emitDisconnected, addToQueue, removeFromQueue, setReleaseCallback, emitEvent };
+module.exports = { startDashboard, setBotClient, emitQR, emitAuthenticated, emitReady, emitDisconnected, addToQueue, removeFromQueue, setReleaseCallback, setSafeInitialize, setUserDisconnectHook, emitEvent };
