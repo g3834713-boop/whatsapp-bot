@@ -26,8 +26,8 @@ const DEFAULTS = {
     startMinute:     0,
     postsPerDay:     12,
     intervalMinutes: 2,
-    namesPerPost:    3,
-    autoScrapeDaily: true,   // re-scrape Alibaba once a week (Sunday midnight)
+    namesPerPost:    5,
+    autoScrapeDaily: true,   // re-scrape shop once a week (Sunday midnight)
 };
 
 // ── Ghanaian names pool ───────────────────────────────────────────────────────
@@ -54,22 +54,7 @@ const NAMES_POOL = [
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// ── Price conversion ─────────────────────────────────────────────────────────
-/**
- * Parse a MIC USD price string, divide by 2, and return formatted Ghana Cedis.
- * e.g. "US$200.00-600.00 / Piece" → "₵100.00 – ₵300.00"
- *      "US$50.00"                  → "₵25.00"
- */
-function convertToGhsCedis(priceStr) {
-    if (!priceStr || priceStr === 'Contact supplier') return priceStr || 'Contact supplier';
-    const match = priceStr.match(/US\$\s*([\d,.]+)(?:\s*[-\u2013]\s*([\d,.]+))?/);
-    if (!match) return priceStr;
-    const parseNum = s => parseFloat(s.replace(/,/g, ''));
-    const lo = parseNum(match[1]) / 2;
-    const hi = match[2] ? parseNum(match[2]) / 2 : null;
-    const fmt = n => '\u20B5' + n.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    return hi ? `${fmt(lo)} \u2013 ${fmt(hi)}` : fmt(lo);
-}
+
 
 // ── Config helpers ────────────────────────────────────────────────────────────
 function loadFeedConfig() {
@@ -83,14 +68,29 @@ function saveFeedConfig(data) {
 }
 
 // ── Posted log ────────────────────────────────────────────────────────────────
-function loadPosted() {
-    try { return JSON.parse(fs.readFileSync(POSTED_FILE, 'utf8')); }
-    catch (_) { return { ids: [] }; }
+/** Normalise a title for deduplication: lowercase, collapse whitespace, strip punctuation */
+function normalizeTitle(title) {
+    return (title || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function markPosted(id) {
+function loadPosted() {
+    try {
+        const d = JSON.parse(fs.readFileSync(POSTED_FILE, 'utf8'));
+        // back-compat: ensure titles array exists
+        if (!d.titles) d.titles = [];
+        return d;
+    } catch (_) { return { ids: [], titles: [] }; }
+}
+
+function clearPosted() {
+    try { fs.writeFileSync(POSTED_FILE, JSON.stringify({ ids: [], titles: [] }, null, 2)); }
+    catch (_) {}
+}
+
+function markPosted(id, title) {
     const d = loadPosted();
-    d.ids = [id, ...d.ids].slice(0, 3000); // rolling window of 3000
+    d.ids    = [id,                   ...d.ids   ].slice(0, 5000);
+    d.titles = [normalizeTitle(title), ...d.titles].slice(0, 5000);
     try { fs.writeFileSync(POSTED_FILE, JSON.stringify(d, null, 2)); }
     catch (_) {}
 }
@@ -107,29 +107,37 @@ function shuffle(arr) {
 
 /**
  * Build the WhatsApp caption for a product post.
- * Includes product info + randomised order list with some names marked ✅ paid.
+ *
+ * Shows a fixed number of order slots (namesPerPost).
+ * Some slots are filled with random Ghanaian names (a few marked ✅ paid),
+ * the remaining slots are left empty (e.g. "4.") to invite new orders.
  */
 function buildCaption(product, cfg) {
-    const count     = Math.max(2, cfg.namesPerPost || 6);
-    const names     = shuffle(NAMES_POOL).slice(0, count);
-    // Randomly mark 1 to ~half the names as paid
-    const paidCount = Math.max(1, Math.floor(Math.random() * Math.ceil(count / 2)));
-    const paidSet   = new Set(shuffle([...names]).slice(0, paidCount));
+    const totalSlots  = Math.max(3, cfg.namesPerPost || 5);
 
-    const orderLines = names.map((name, i) =>
-        `${i + 1}. ${name}${paidSet.has(name) ? ' ✅' : ''}`
-    ).join('\n');
+    // Fill 1 to (totalSlots - 1) slots, leaving at least one empty
+    const filledCount = Math.floor(Math.random() * (totalSlots - 1)) + 1;
+    const names       = shuffle(NAMES_POOL).slice(0, filledCount);
+    const paidCount   = Math.max(1, Math.floor(Math.random() * Math.ceil(filledCount / 2)));
+    const paidSet     = new Set(shuffle([...names]).slice(0, paidCount));
 
-    const ghsPrice = convertToGhsCedis(product.price);
+    const orderLines = [];
+    for (let i = 1; i <= totalSlots; i++) {
+        const name = names[i - 1]; // undefined for empty slots
+        orderLines.push(name ? `${i}. ${name}${paidSet.has(name) ? ' ✅' : ''}` : `${i}.`);
+    }
+
+    // Price comes directly from the site (GH₵XX.XX) — strip the "GH" prefix to show ₵XX.XX
+    const displayPrice = (product.price || 'Contact seller').replace(/^GH/, '');
 
     const lines = [
         `🛍️ *${product.title}*`,
         ``,
-        `💰 *Price:* ${ghsPrice}`,
-        `📦 *MOQ:* ${product.minOrder}`,
+        `💰 Price: ${displayPrice}`,
+        `📦 MOQ: ${product.minOrder}`,
         ``,
         `📋 *Current Order List:*`,
-        orderLines,
+        ...orderLines,
         ``,
         `_Reply with your name to join this order!_`,
     ];
@@ -147,13 +155,28 @@ async function runDailyFeed(client, emitFn) {
     if (!cfg.enabled)  { console.log('[FEED] Disabled — skipping run.'); return; }
     if (!cfg.groupId)  { console.log('[FEED] No group set — skipping run.'); return; }
 
-    const posted = loadPosted();
-    const all    = getAllCachedProducts().filter(p => !posted.ids.includes(p.id));
+    let posted    = loadPosted();
+    const cache    = getAllCachedProducts();
 
-    if (all.length === 0) {
-        console.log('[FEED] No un-posted products available. Trigger a scrape first.');
+    if (cache.length === 0) {
+        console.log('[FEED] No products in cache. Trigger a scrape first.');
         if (emitFn) emitFn('feed-status', { message: '⚠️ No products in cache. Please run Refresh Cache.' });
         return;
+    }
+
+    // Filter out already-posted products by BOTH id AND normalised title
+    let all = cache.filter(p =>
+        !posted.ids.includes(p.id) &&
+        !posted.titles.includes(normalizeTitle(p.title))
+    );
+
+    // When every product in the cache has been posted, reset and cycle through again
+    if (all.length === 0) {
+        console.log('[FEED] All products have been posted — resetting cycle and starting fresh.');
+        if (emitFn) emitFn('feed-status', { message: '🔄 All products cycled. Starting fresh round.' });
+        clearPosted();
+        posted = loadPosted();
+        all    = [...cache];
     }
 
     const toPost     = shuffle(all).slice(0, cfg.postsPerDay);
@@ -173,7 +196,7 @@ async function runDailyFeed(client, emitFn) {
                         reqOptions: {
                             headers: {
                                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                                'Referer':    'https://www.made-in-china.com/',
+                                'Referer':    'https://jd-fx-imports.vercel.app/',
                             },
                         },
                     });
@@ -191,7 +214,7 @@ async function runDailyFeed(client, emitFn) {
                 await chat.sendMessage(caption);
             }
 
-            markPosted(product.id);
+            markPosted(product.id, product.title);
             console.log(`[FEED] ✓ ${i + 1}/${toPost.length}: ${product.title.slice(0, 50)}`);
             if (emitFn) emitFn('feed-progress', { done: i + 1, total: toPost.length });
 
