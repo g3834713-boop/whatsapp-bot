@@ -22,7 +22,9 @@ const fs    = require('fs');
 const path  = require('path');
 
 const API_URL       = 'https://backend-jd.vercel.app/api/products';
-const PRODUCTS_FILE = path.join(__dirname, '..', 'config', 'products.json');
+
+const DATA_DIR      = process.env.DATA_DIR || path.join(__dirname, '..');
+const PRODUCTS_FILE = path.join(DATA_DIR, 'config', 'products.json');
 
 const REQUEST_HEADERS = {
     'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',

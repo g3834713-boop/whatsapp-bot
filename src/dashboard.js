@@ -499,17 +499,8 @@ app.post('/api/settings', (req, res) => {
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
 
 // Files included in backup (config JSONs + all images)
-// NOTE: agentmode.json is intentionally excluded (runtime state, not config)
 const BACKUP_CONFIG_FILES = [
-    'autoreply.json',
-    'messages.json',
-    'settings.json',
-    'schedules.json',
-    'customers.json',
-    'quickreplies.json',
-    'campaigns.json',
-    'ooo.json',
-    'productfeed.json',
+    'autoreply.json', 'messages.json', 'settings.json', 'schedules.json', 'customers.json',
 ];
 
 app.get('/api/backup', (req, res) => {
@@ -607,7 +598,12 @@ app.post('/api/images/upload', (req, res) => {
 let _scrapeInProgress = false;
 
 app.get('/api/productfeed/config', (req, res) => {
-    res.json(loadFeedConfig());
+    const cfg = loadFeedConfig();
+    // Include server's current time so the dashboard can show it
+    const now = new Date();
+    cfg.serverTime = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    cfg.serverTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    res.json(cfg);
 });
 
 app.post('/api/productfeed/config', (req, res) => {

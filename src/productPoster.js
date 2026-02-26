@@ -15,8 +15,12 @@ const cron = require('node-cron');
 const { MessageMedia } = require('whatsapp-web.js');
 const { getAllCachedProducts } = require('./productScraper');
 
-const FEED_FILE   = path.join(__dirname, '..', 'config', 'productfeed.json');
-const POSTED_FILE = path.join(__dirname, '..', 'config', 'productfeed_posted.json');
+// Use DATA_DIR so files survive Railway redeploys (persistent volume at /app/data).
+// Falls back to project root for local dev.
+const DATA_DIR    = process.env.DATA_DIR || path.join(__dirname, '..');
+const CONFIG_DIR  = path.join(DATA_DIR, 'config');
+const FEED_FILE   = path.join(CONFIG_DIR, 'productfeed.json');
+const POSTED_FILE = path.join(CONFIG_DIR, 'productfeed_posted.json');
 
 const DEFAULTS = {
     enabled:         false,
@@ -63,8 +67,10 @@ function loadFeedConfig() {
 }
 
 function saveFeedConfig(data) {
-    try { fs.writeFileSync(FEED_FILE, JSON.stringify(data, null, 2)); }
-    catch (e) { console.error('[FEED] Config save failed:', e.message); }
+    try {
+        if (!fs.existsSync(CONFIG_DIR)) fs.mkdirSync(CONFIG_DIR, { recursive: true });
+        fs.writeFileSync(FEED_FILE, JSON.stringify(data, null, 2));
+    } catch (e) { console.error('[FEED] Config save failed:', e.message); }
 }
 
 // ── Posted log ────────────────────────────────────────────────────────────────
@@ -234,16 +240,32 @@ let _cronJob = null;
 function startProductFeedScheduler(client, emitFn) {
     if (_cronJob) { _cronJob.stop(); _cronJob = null; }
 
-    // Check every minute if it's time to run
+    // Check every minute.
+    // Uses a "ran today" flag so:
+    //   - It fires reliably even if the bot restarts AFTER the scheduled minute.
+    //   - It never double-fires within the same calendar day.
     _cronJob = cron.schedule('* * * * *', () => {
         const cfg = loadFeedConfig();
         if (!cfg.enabled) return;
-        const now = new Date();
-        if (now.getHours() === Number(cfg.startHour) && now.getMinutes() === Number(cfg.startMinute)) {
+
+        const now      = new Date();
+        const todayStr = now.toDateString();                 // e.g. "Thu Feb 26 2026"
+        const startH   = Number(cfg.startHour);
+        const startM   = Number(cfg.startMinute);
+        const nowH     = now.getHours();
+        const nowM     = now.getMinutes();
+
+        // True once the configured time has been reached today
+        const timeReached = nowH > startH || (nowH === startH && nowM >= startM);
+
+        if (timeReached && cfg.lastRunDate !== todayStr) {
+            // Stamp BEFORE running so a crash/restart mid-feed doesn't re-trigger
+            saveFeedConfig({ ...cfg, lastRunDate: todayStr });
+            console.log(`[FEED] Scheduled run triggered at ${nowH}:${String(nowM).padStart(2,'0')} (target ${startH}:${String(startM).padStart(2,'0')})`);
             runDailyFeed(client, emitFn).catch(e => console.error('[FEED] Error:', e.message));
 
-            // Auto-scrape weekly: runs once a week on Sunday at midnight
-            if (cfg.autoScrapeDaily && now.getDay() === 0 && now.getHours() === 0 && now.getMinutes() === 0) {
+            // Auto-scrape weekly: Sunday midnight
+            if (cfg.autoScrapeDaily && now.getDay() === 0 && nowH === 0) {
                 const { refreshProductCache } = require('./productScraper');
                 refreshProductCache().catch(e => console.error('[SCRAPER] Auto-refresh error:', e.message));
             }
