@@ -83,6 +83,19 @@ function createClient() {
                 '--disable-features=IsolateOrigins,site-per-process,VizDisplayCompositor',
                 '--disable-site-isolation-trials',
                 '--shm-size=256mb',
+                // Memory savings — critical on Railway's limited RAM
+                '--disable-extensions',
+                '--disable-background-networking',
+                '--disable-default-apps',
+                '--disable-sync',
+                '--disable-translate',
+                '--hide-scrollbars',
+                '--mute-audio',
+                '--safebrowsing-disable-auto-update',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--js-flags=--max-old-space-size=256',
             ]
         }
     });
