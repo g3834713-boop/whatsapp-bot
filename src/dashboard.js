@@ -499,8 +499,17 @@ app.post('/api/settings', (req, res) => {
 const CONFIG_DIR = path.join(__dirname, '..', 'config');
 
 // Files included in backup (config JSONs + all images)
+// NOTE: agentmode.json is intentionally excluded (runtime state, not config)
 const BACKUP_CONFIG_FILES = [
-    'autoreply.json', 'messages.json', 'settings.json', 'schedules.json', 'customers.json',
+    'autoreply.json',
+    'messages.json',
+    'settings.json',
+    'schedules.json',
+    'customers.json',
+    'quickreplies.json',
+    'campaigns.json',
+    'ooo.json',
+    'productfeed.json',
 ];
 
 app.get('/api/backup', (req, res) => {
