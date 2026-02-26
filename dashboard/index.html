@@ -525,7 +525,7 @@ textarea{resize:vertical;min-height:60px}
   <!-- PRODUCT FEED -->
   <div class="page" id="page-productfeed">
     <h2>Product Feed</h2>
-    <p class="sub">Automatically post product listings with factory prices from made-in-china.com to a WhatsApp group every morning.</p>
+    <p class="sub">Automatically post product listings from JD FX Imports to a WhatsApp group on a daily schedule. Configure the group, timing and post count below.</p>
 
     <!-- Settings card -->
     <div class="card">
@@ -588,7 +588,7 @@ textarea{resize:vertical;min-height:60px}
         </div>
       </div>
 
-      <p class="sub" style="margin-bottom:16px">Scraping fetches products from <strong>made-in-china.com</strong> across 24 categories (~2–4 min). The cache persists on disk — you only need to refresh it occasionally.</p>
+      <p class="sub" style="margin-bottom:16px">Fetches products from <strong>jd-fx-imports.vercel.app</strong> via the backend REST API — fast, usually under 5 seconds. The cache persists on disk so you only need to refresh it when new products are added.</p>
 
       <div id="pf_scrapeProgress" style="display:none;margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;margin-bottom:6px">
@@ -602,6 +602,21 @@ textarea{resize:vertical;min-height:60px}
 
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn btn-primary" id="pf_scrapeBtn" onclick="startScrape()">🔄 Refresh Product Cache</button>
+      </div>
+    </div>
+
+    <!-- Posting progress card -->
+    <div class="card" id="pf_postCard" style="margin-top:20px;display:none">
+      <div class="card-title">📤 Posting Progress</div>
+      <div id="pf_postStatus" style="font-size:13px;color:#94a3b8;margin:10px 0 6px">Idle</div>
+      <div id="pf_postProgressWrap" style="display:none">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+          <span style="font-size:12px;color:#94a3b8" id="pf_postLabel">Sending posts…</span>
+          <span style="font-size:12px;color:#94a3b8" id="pf_postPct">0%</span>
+        </div>
+        <div style="background:#1e2535;border-radius:6px;height:8px;overflow:hidden">
+          <div id="pf_postBar" style="background:#25d366;height:100%;width:0%;transition:width .3s"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1528,15 +1543,28 @@ async function loadFeedPage() {
   // Populate group dropdown
   const sel = document.getElementById('pf_groupId');
   sel.innerHTML = '<option value="">— select a group —</option>';
+  // If a group is already saved but bot is offline, show it as a placeholder so selection isn't lost
+  if (cfg.groupId) {
+    const fallback = document.createElement('option');
+    fallback.value = cfg.groupId;
+    fallback.textContent = cfg.groupName || cfg.groupId + ' (saved)';
+    fallback.selected = true;
+    sel.appendChild(fallback);
+  }
   try {
-    const { groups } = await fetch('/api/chats').then(r => r.json());
-    (groups || []).forEach(g => {
-      const opt = document.createElement('option');
-      opt.value = g.id;
-      opt.textContent = g.name + (g.participantsCount ? ` (${g.participantsCount})` : '');
-      if (cfg.groupId === g.id) opt.selected = true;
-      sel.appendChild(opt);
-    });
+    const resp = await fetch('/api/chats').then(r => r.json());
+    const groups = resp.groups || [];
+    if (groups.length) {
+      // Replace contents with live data
+      sel.innerHTML = '<option value="">— select a group —</option>';
+      groups.forEach(g => {
+        const opt = document.createElement('option');
+        opt.value = g.id;
+        opt.textContent = g.name + (g.participantsCount ? ` (${g.participantsCount})` : '');
+        if (cfg.groupId === g.id) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
   } catch(_) {}
 
   // Cache stats
@@ -1584,7 +1612,7 @@ async function startScrape() {
     btn.disabled = false; btn.textContent = '🔄 Refresh Product Cache';
     return;
   }
-  toast('🔄 Scrape started — this takes 5–8 minutes.', 'ok');
+  toast('🔄 Fetching products from API — should complete in a few seconds.', 'ok');
   document.getElementById('pf_scrapeProgress').style.display = 'block';
 }
 
@@ -1601,23 +1629,49 @@ async function runTestPost() {
     return;
   }
   socket.on('scrape-progress', ({ done, total, keyword }) => {
+    if (!total) return;
     const pct = Math.round((done / total) * 100);
     document.getElementById('pf_scrapeBar').style.width  = pct + '%';
     document.getElementById('pf_scrapePct').textContent  = pct + '%';
-    document.getElementById('pf_scrapeLabel').textContent = `Scraping: "${keyword}"`;
+    document.getElementById('pf_scrapeLabel').textContent = 'Mapping: ' + (keyword || '').slice(0, 40);
   });
   socket.on('scrape-complete', (data) => {
     document.getElementById('pf_scrapeProgress').style.display = 'none';
     const btn = document.getElementById('pf_scrapeBtn');
     if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh Product Cache'; }
-    if (data.error) { toast('❌ Scrape failed: ' + data.error, 'err'); return; }
     toast(`✅ Scrape complete — ${data.total} products cached!`, 'ok');
     refreshCacheStats();
   });
-  socket.on('feed-status',   ({ message }) => toast(message, 'ok'));
-  socket.on('feed-progress', ({ done, total }) =>
-    console.log(`[FEED] ${done}/${total} posts sent`)
-  );
+  socket.on('scrape-error', ({ error }) => {
+    document.getElementById('pf_scrapeProgress').style.display = 'none';
+    const btn = document.getElementById('pf_scrapeBtn');
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh Product Cache'; }
+    toast('❌ Scrape failed: ' + error, 'err');
+  });
+  socket.on('feed-status', ({ message }) => {
+    toast(message, 'ok');
+    const el = document.getElementById('pf_postStatus');
+    if (el) el.textContent = message;
+    // Show the posting card
+    const card = document.getElementById('pf_postCard');
+    if (card) card.style.display = '';
+  });
+  socket.on('feed-progress', ({ done, total }) => {
+    const wrap = document.getElementById('pf_postProgressWrap');
+    const bar  = document.getElementById('pf_postBar');
+    const pct  = document.getElementById('pf_postPct');
+    const lbl  = document.getElementById('pf_postLabel');
+    if (!wrap) return;
+    if (!total) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    const p = Math.round((done / total) * 100);
+    if (bar)  bar.style.width   = p + '%';
+    if (pct)  pct.textContent   = p + '%';
+    if (lbl)  lbl.textContent   = `Sending post ${done} of ${total}…`;
+    if (done >= total) {
+      setTimeout(() => { if (wrap) wrap.style.display = 'none'; }, 4000);
+    }
+  });
 })();
 
 // ── Backup & Restore ──────────────────────────────────────────────────────────
