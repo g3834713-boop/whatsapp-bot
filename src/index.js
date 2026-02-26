@@ -93,12 +93,12 @@ async function safeInitialize(attempts = 0) {
         return;
     }
     _reconnecting = true;
-    const MAX = 5;
 
     // Always destroy the old instance and create a fresh one so that
     // whatsapp-web.js internal state is fully reset and a new QR is emitted.
     if (_activeClient) {
         try { await _activeClient.destroy(); } catch (_) { /* already dead */ }
+        _activeClient = null;
     }
     const client = createClient();
     _activeClient = client;
@@ -106,28 +106,17 @@ async function safeInitialize(attempts = 0) {
     setBotClient(client);
 
     try {
-        console.log(`[BOT] Starting WhatsApp bot... (attempt ${attempts + 1}/${MAX})`);
+        console.log(`[BOT] Starting WhatsApp bot... (attempt ${attempts + 1})`);
         await client.initialize();
         _reconnecting = false;
+        console.log('[BOT] Initialized successfully.');
     } catch (err) {
-        const isRetryable =
-            err.message && (
-                err.message.includes('Execution context was destroyed') ||
-                err.message.includes('Protocol error') ||
-                err.message.includes('Target closed') ||
-                err.message.includes('Session closed') ||
-                err.message.includes('Navigation')
-            );
-        if (isRetryable && attempts < MAX - 1) {
-            const wait = (attempts + 1) * 5000;
-            console.warn(`[BOT] Init failed (${err.message.split('\n')[0]}). Retrying in ${wait / 1000}s...`);
-            _reconnecting = false; // allow next attempt
-            await new Promise(r => setTimeout(r, wait));
-            return safeInitialize(attempts + 1);
-        }
-        console.error('[BOT] Failed to initialize after retries:', err.message);
+        console.warn(`[BOT] Init error (attempt ${attempts + 1}): ${err.message.split('\n')[0]}`);
         _reconnecting = false;
-        // Keep process alive so dashboard remains accessible
+        // Always retry — clamp backoff between 5s and 2 minutes
+        const wait = Math.min(5000 * Math.pow(1.5, attempts), 120000);
+        console.log(`[BOT] Retrying in ${Math.round(wait / 1000)}s...`);
+        setTimeout(() => safeInitialize(attempts + 1), wait);
     }
 }
 
@@ -219,10 +208,46 @@ function attachListeners(client) {
     client.on('disconnected', (reason) => {
         console.log('[BOT] Disconnected:', reason);
         emitDisconnected();
-        // Auto-reconnect after 10s with a brand-new Client instance
         console.log('[BOT] Will attempt reconnect in 10s...');
         setTimeout(() => safeInitialize(), 10000);
     });
+
+    client.on('change_state', (state) => {
+        console.log('[BOT] State changed:', state);
+        // If WhatsApp signals it's no longer open/connected, trigger reconnect
+        if (state === 'CONFLICT' || state === 'UNLAUNCHED') {
+            console.warn(`[BOT] Bad state "${state}" — reconnecting in 5s...`);
+            emitDisconnected();
+            setTimeout(() => safeInitialize(), 5000);
+        }
+    });
+
+    // ── Watchdog: heartbeat every 30s ─────────────────────────────────────────
+    // WhatsApp Web can silently lose its connection without firing 'disconnected'.
+    // Pings the page every 30s to keep Puppeteer alive and detects dead sessions.
+    const watchdog = setInterval(async () => {
+        // Only run against the client this listener belongs to
+        if (client !== _activeClient) { clearInterval(watchdog); return; }
+        try {
+            // Keep the Puppeteer page from going idle
+            if (client.pupPage) {
+                await client.pupPage.evaluate(() => true).catch(() => {});
+            }
+            const state = await client.getState();
+            if (!state || state !== 'CONNECTED') {
+                console.warn(`[WATCHDOG] State is "${state}" — reconnecting...`);
+                clearInterval(watchdog);
+                emitDisconnected();
+                safeInitialize();
+            }
+        } catch (err) {
+            console.warn('[WATCHDOG] Health check failed:', err.message, '— reconnecting...');
+            clearInterval(watchdog);
+            emitDisconnected();
+            safeInitialize();
+        }
+    }, 30 * 1000); // every 30 seconds
+    // ─────────────────────────────────────────────────────────────────────────
 }
 
 // ── Catch stale Puppeteer errors that escape mid-session ──────────────────────
@@ -230,21 +255,26 @@ function attachListeners(client) {
 // client is already running. Trigger a reconnect instead of going silent.
 process.on('unhandledRejection', (reason) => {
     const msg = reason && (reason.message || String(reason));
+    if (!msg) return;
     const isPuppeteer =
-        msg && (
-            msg.includes('Execution context was destroyed') ||
-            msg.includes('Protocol error') ||
-            msg.includes('Target closed') ||
-            msg.includes('Session closed')
-        );
+        msg.includes('Execution context was destroyed') ||
+        msg.includes('Protocol error') ||
+        msg.includes('Target closed') ||
+        msg.includes('Session closed') ||
+        msg.includes('Navigation') ||
+        msg.includes('detached Frame');
     if (isPuppeteer) {
-        console.warn('[BOT] Puppeteer mid-session crash detected. Reconnecting in 10s...');
+        console.warn('[BOT] Puppeteer crash detected. Reconnecting in 10s...');
         emitDisconnected();
         setTimeout(() => safeInitialize(), 10000);
     } else {
         console.error('[BOT] Unhandled rejection:', msg);
     }
 });
+
+// Safety net: if something kills the event loop's natural activity,
+// this timer ensures the process never exits on its own.
+setInterval(() => {}, 60 * 60 * 1000);
 
 startDashboard(3000);
 setReleaseCallback(releaseContact); // Allow dashboard to release agent mode
