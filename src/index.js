@@ -25,6 +25,32 @@ const { startDashboard, setBotClient, emitQR, emitReady, emitDisconnected, setRe
 const { startCampaigns } = require('./campaigns');
 const { startProductFeedScheduler } = require('./productPoster');
 
+// ── Simple concurrency-limited message queue ──────────────────────────────────
+// Prevents overwhelming the Puppeteer/WhatsApp bridge when many clients
+// message simultaneously. All incoming messages queue up and are processed
+// MAX_CONCURRENT at a time.
+const MAX_CONCURRENT = 3;
+let _running = 0;
+const _queue = [];
+
+function enqueueMessage(fn) {
+    return new Promise((resolve, reject) => {
+        _queue.push({ fn, resolve, reject });
+        _drainQueue();
+    });
+}
+
+function _drainQueue() {
+    while (_running < MAX_CONCURRENT && _queue.length > 0) {
+        const { fn, resolve, reject } = _queue.shift();
+        _running++;
+        fn().then(resolve, reject).finally(() => {
+            _running--;
+            _drainQueue();
+        });
+    }
+}
+
 // ── Client factory ─────────────────────────────────────────────────────────────
 // A fresh Client instance is required on every reconnect — reusing an old
 // instance after destroy() does NOT re-emit a QR code reliably.
@@ -150,11 +176,24 @@ function attachListeners(client) {
         // Auto-reply for private (non-group, non-channel) messages
         const isPrivate = !msg.from.endsWith('@g.us') && !msg.from.endsWith('@newsletter');
         if (isPrivate && !msg.fromMe) {
-            const handled = await handleAutoReply(client, msg);
-            if (handled) return; // don't process as a command if auto-reply handled it
+            // Queue the handler to prevent Puppeteer overload under high message volume
+            enqueueMessage(async () => {
+                try {
+                    const handled = await handleAutoReply(client, msg);
+                    if (handled) return;
+                    // Not handled by auto-reply — try as a command
+                    if (msg.body && msg.body.startsWith(prefix)) {
+                        console.log(`[MSG] From: ${msg.from} | Body: ${msg.body}`);
+                        await handleCommand(client, msg, prefix);
+                    }
+                } catch (err) {
+                    console.error('[MSG] Error processing message from', msg.from, ':', err.message);
+                }
+            }).catch(err => console.error('[QUEUE] Unhandled error:', err.message));
+            return;
         }
 
-        if (!msg.body.startsWith(prefix)) return;
+        if (!msg.body || !msg.body.startsWith(prefix)) return;
 
         console.log(`[MSG] From: ${msg.from} | Body: ${msg.body}`);
         await handleCommand(client, msg, prefix);

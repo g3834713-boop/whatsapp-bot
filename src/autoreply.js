@@ -203,14 +203,30 @@ const botSentIds = new Set();
 // This flag blocks agentSentMessage during the entire handleAutoReply call.
 const botReplying = new Set();
 
+// Map: contactId → timestamp of last bot auto-reply.
+// Belt-and-suspenders guard: if the bot replied to this contact within 30s,
+// treat any outgoing message from message_create as a bot message (not agent).
+const botLastReplied = new Map();
+const BOT_REPLY_WINDOW_MS = 30000;
+
 /** Register a sent message so releaseAgentMode ignores it. */
-function trackBotMessage(sentMsg) {
+function trackBotMessage(sentMsg, contactId) {
     if (!sentMsg) return;
     const id = sentMsg.id && sentMsg.id._serialized;
     if (id) {
         botSentIds.add(id);
         // Auto-clean after 30 seconds to avoid unbounded growth
-        setTimeout(() => botSentIds.delete(id), 30000);
+        setTimeout(() => botSentIds.delete(id), BOT_REPLY_WINDOW_MS);
+    }
+    // Also record the contact and time for the timing-based guard
+    if (contactId) {
+        botLastReplied.set(contactId, Date.now());
+        setTimeout(() => {
+            // Only delete if this is still the same (or older) timestamp
+            if ((botLastReplied.get(contactId) || 0) <= Date.now()) {
+                botLastReplied.delete(contactId);
+            }
+        }, BOT_REPLY_WINDOW_MS);
     }
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -298,6 +314,8 @@ async function sendWelcome(client, from, newCust, cfg) {
 async function handleAutoReply(client, msg) {
     const from = msg.from;
     botReplying.add(from);
+    // Pre-mark as bot-handled so agentSentMessage timing guard covers the whole reply window
+    botLastReplied.set(from, Date.now());
     try {
         const cfg = loadConfig();
         if (!cfg.enabled) return false;
@@ -306,11 +324,23 @@ async function handleAutoReply(client, msg) {
         let contactName  = '';
         let newCustomer  = null; // set for first-time customers
         try {
-            const contact = await msg.getContact();
-            contactName   = contact.pushname || contact.name || '';
-            newCustomer   = recordCustomer(from, contactName); // returns obj if new, null if existing
+            // Use synchronous notifyName first to avoid Puppeteer round-trips
+            // (concurrent getContact() calls under load crash the CDP bridge).
+            contactName = (msg._data && (msg._data.notifyName || msg._data.pushname)) || '';
+            if (!contactName) {
+                // Only fall back to getContact when not already recorded and sync name unavailable
+                if (!isKnownContact(from)) {
+                    const contact = await msg.getContact();
+                    contactName   = contact.pushname || contact.name || '';
+                }
+            }
+            newCustomer = recordCustomer(from, contactName); // returns obj if new, null if existing
             touchCustomer(from);
-        } catch (e) { /* non-fatal */ }
+        } catch (e) {
+            console.warn('[AUTO-REPLY] getContact error (non-fatal):', e.message);
+            // Still record/touch even without a name so the client gets a reply
+            try { newCustomer = recordCustomer(from, ''); touchCustomer(from); } catch (_) {}
+        }
         // ─────────────────────────────────────────────────────────────────────
 
         const bodyRaw = (msg.body || '').trim();
@@ -557,13 +587,23 @@ async function handleAutoReply(client, msg) {
  * agent mode and silence the bot for that contact.
  */
 function agentSentMessage(msgId, contactId) {
-    // Fast-path: bot is mid-reply right now — definitely a bot message.
+    // Fast-path 1: bot is mid-reply right now — definitely a bot message.
     if (botReplying.has(contactId)) return false;
+
+    // Fast-path 2: bot replied to this contact very recently (within 30s).
+    // Catches JID-format mismatches (@lid vs @c.us) where botReplying key
+    // differs from message_create msg.to, and also covers cases where
+    // message_create fires after botReplying has already been cleared.
+    const lastReplied = botLastReplied.get(contactId);
+    if (lastReplied && (Date.now() - lastReplied) < BOT_REPLY_WINDOW_MS) return false;
 
     // Defer the rest so any pending trackBotMessage microtasks run first.
     setImmediate(() => {
         // Re-check after deferral
         if (botReplying.has(contactId)) return;
+
+        const lr = botLastReplied.get(contactId);
+        if (lr && (Date.now() - lr) < BOT_REPLY_WINDOW_MS) return;
 
         // Ignore bot's own auto-sent messages (registered by trackBotMessage)
         if (msgId && botSentIds.has(msgId)) {
