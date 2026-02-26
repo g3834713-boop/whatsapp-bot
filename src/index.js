@@ -95,7 +95,6 @@ function createClient() {
                 '--disable-background-timer-throttling',
                 '--disable-backgrounding-occluded-windows',
                 '--disable-renderer-backgrounding',
-                '--js-flags=--max-old-space-size=256',
             ]
         }
     });

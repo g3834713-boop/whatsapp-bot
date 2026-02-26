@@ -203,30 +203,24 @@ const botSentIds = new Set();
 // This flag blocks agentSentMessage during the entire handleAutoReply call.
 const botReplying = new Set();
 
-// Map: contactId → timestamp of last bot auto-reply.
-// Belt-and-suspenders guard: if the bot replied to this contact within 30s,
-// treat any outgoing message from message_create as a bot message (not agent).
+// Map: BARE PHONE NUMBER → timestamp of last bot auto-reply.
+// Keyed by number only (no @c.us / @lid suffix) so JID format mismatches between
+// incoming msg.from and outgoing msg.to never cause false agent-mode activation.
 const botLastReplied = new Map();
-const BOT_REPLY_WINDOW_MS = 30000;
+const BOT_REPLY_WINDOW_MS = 60000; // 60 seconds
 
-/** Register a sent message so releaseAgentMode ignores it. */
-function trackBotMessage(sentMsg, contactId) {
+/** Strip @c.us / @lid / @s.whatsapp.net — returns bare number string */
+function _barePhone(jid) {
+    return (jid || '').split('@')[0];
+}
+
+/** Register a sent message so agentSentMessage ignores it. */
+function trackBotMessage(sentMsg) {
     if (!sentMsg) return;
     const id = sentMsg.id && sentMsg.id._serialized;
     if (id) {
         botSentIds.add(id);
-        // Auto-clean after 30 seconds to avoid unbounded growth
         setTimeout(() => botSentIds.delete(id), BOT_REPLY_WINDOW_MS);
-    }
-    // Also record the contact and time for the timing-based guard
-    if (contactId) {
-        botLastReplied.set(contactId, Date.now());
-        setTimeout(() => {
-            // Only delete if this is still the same (or older) timestamp
-            if ((botLastReplied.get(contactId) || 0) <= Date.now()) {
-                botLastReplied.delete(contactId);
-            }
-        }, BOT_REPLY_WINDOW_MS);
     }
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -313,9 +307,11 @@ async function sendWelcome(client, from, newCust, cfg) {
 
 async function handleAutoReply(client, msg) {
     const from = msg.from;
+    const fromPhone = _barePhone(from); // JID-format-agnostic key
     botReplying.add(from);
-    // Pre-mark as bot-handled so agentSentMessage timing guard covers the whole reply window
-    botLastReplied.set(from, Date.now());
+    botReplying.add(fromPhone);
+    // Pre-mark by bare number so the timing guard works regardless of @c.us vs @lid
+    botLastReplied.set(fromPhone, Date.now());
     try {
         const cfg = loadConfig();
         if (!cfg.enabled) return false;
@@ -568,10 +564,11 @@ async function handleAutoReply(client, msg) {
         return true;
 
     } catch (err) {
-        console.error('[AUTO-REPLY] Error:', err.message);
+        console.error('[AUTO-REPLY] Error:', err.message, '| contact:', from, '| body:', msg.body);
         return false;
     } finally {
         botReplying.delete(from);
+        botReplying.delete(fromPhone);
     }
 }
 
@@ -587,36 +584,34 @@ async function handleAutoReply(client, msg) {
  * agent mode and silence the bot for that contact.
  */
 function agentSentMessage(msgId, contactId) {
-    // Fast-path 1: bot is mid-reply right now — definitely a bot message.
-    if (botReplying.has(contactId)) return false;
+    const phone = _barePhone(contactId);
 
-    // Fast-path 2: bot replied to this contact very recently (within 30s).
-    // Catches JID-format mismatches (@lid vs @c.us) where botReplying key
-    // differs from message_create msg.to, and also covers cases where
-    // message_create fires after botReplying has already been cleared.
-    const lastReplied = botLastReplied.get(contactId);
+    // Fast-path 1: bot is actively replying to this contact right now
+    if (botReplying.has(contactId) || botReplying.has(phone)) return false;
+
+    // Fast-path 2: bot replied to this number within the last 60s (JID-format agnostic)
+    const lastReplied = botLastReplied.get(phone);
     if (lastReplied && (Date.now() - lastReplied) < BOT_REPLY_WINDOW_MS) return false;
 
-    // Defer the rest so any pending trackBotMessage microtasks run first.
+    // Defer so any pending trackBotMessage microtasks run first.
     setImmediate(() => {
-        // Re-check after deferral
-        if (botReplying.has(contactId)) return;
-
-        const lr = botLastReplied.get(contactId);
+        if (botReplying.has(contactId) || botReplying.has(phone)) return;
+        const lr = botLastReplied.get(phone);
         if (lr && (Date.now() - lr) < BOT_REPLY_WINDOW_MS) return;
 
-        // Ignore bot's own auto-sent messages (registered by trackBotMessage)
+        // Ignore bot's own auto-sent messages
         if (msgId && botSentIds.has(msgId)) {
-            botSentIds.delete(msgId); // consume
+            botSentIds.delete(msgId);
             return;
         }
 
-        // Only activate agent mode for contacts who have actually messaged the
-        // bot before. This prevents the owner's personal WhatsApp messages to
-        // unrelated contacts from accidentally silencing the bot for them.
-        if (!isKnownContact(contactId)) return;
+        // Only activate agent mode for contacts that have actually messaged the bot.
+        // Check both full JID and bare-number variants to handle @c.us / @lid differences.
+        const knownByJid    = isKnownContact(contactId);
+        const knownByCus    = isKnownContact(phone + '@c.us');
+        const knownByLid    = isKnownContact(phone + '@lid');
+        if (!knownByJid && !knownByCus && !knownByLid) return;
 
-        // Agent manually sent a message — activate / refresh agent mode
         agentMode.set(contactId, Date.now());
         saveAgentMode();
         console.log('[AGENT] ON / timer reset (agent messaged) for ' + contactId);
