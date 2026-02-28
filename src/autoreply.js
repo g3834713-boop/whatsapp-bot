@@ -421,6 +421,10 @@ async function handleAutoReply(client, msg) {
                 if (hit) {
                     trackBotMessage(await client.sendMessage(from, rule.response));
                     console.log(`[QUICK-REPLY] Rule "${rule.trigger}" matched for ${from}`);
+                    // Auto-enable agent mode so the same quick reply doesn't flood on repeat messages
+                    agentMode.set(from, Date.now());
+                    saveAgentMode();
+                    console.log('[AGENT] ON (auto — quick reply triggered) for ' + from);
                     return true;
                 }
             }
@@ -431,6 +435,10 @@ async function handleAutoReply(client, msg) {
         if (isOOO() && !isBypassCmd) {
             trackBotMessage(await client.sendMessage(from, getOOOMessage()));
             console.log('[OOO] Message sent to ' + from);
+            // Auto-enable agent mode so further messages don't keep re-sending the OOO reply
+            agentMode.set(from, Date.now());
+            saveAgentMode();
+            console.log('[AGENT] ON (auto — OOO triggered) for ' + from);
             return true;
         }
         // ─────────────────────────────────────────────────────────────────────
@@ -439,6 +447,10 @@ async function handleAutoReply(client, msg) {
             trackBotMessage(await client.sendMessage(from, closedMessage()));
             menuShown.add(from);
             console.log('[AUTO-REPLY] Closed-hours message sent to ' + from);
+            // Auto-enable agent mode so further messages don't keep re-sending the closed reply
+            agentMode.set(from, Date.now());
+            saveAgentMode();
+            console.log('[AGENT] ON (auto — closed hours triggered) for ' + from);
             return true;
         }
         // ─────────────────────────────────────────────────────────────────────
@@ -560,6 +572,10 @@ async function handleAutoReply(client, msg) {
         } else {
             trackBotMessage(await client.sendMessage(from, loadMessages().nudge));
             console.log('[AUTO-REPLY] Nudge sent to ' + from);
+            // Auto-enable agent mode so further unrecognised messages don't keep triggering the nudge
+            agentMode.set(from, Date.now());
+            saveAgentMode();
+            console.log('[AGENT] ON (auto — nudge triggered) for ' + from);
         }
         return true;
 
